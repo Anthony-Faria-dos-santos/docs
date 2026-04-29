@@ -1,0 +1,160 @@
+---
+title: "MotionOps quickstart: from signup to live detections"
+description: "Create your account, log in, connect your first camera, and start receiving live AI detection events — four steps, each with copy-pasteable API examples."
+---
+
+This guide walks you through the four steps needed to go from a new account to a live camera feed with AI-powered event detection running. By the end, you'll have a camera connected and events appearing in your dashboard.
+
+<Steps>
+  <Step title="Sign up or accept an invite">
+    If your organization's admin sent you an invitation link, open it and follow the prompts — your role is pre-assigned and you can skip straight to creating a password.
+
+    For self-service sign-up, go to the MotionOps dashboard and click **Sign up**. Fill in your display name, email address, and a password of at least 12 characters. You must accept the Terms of Service and Privacy Policy to proceed.
+
+    After submitting, MotionOps sends a verification email to the address you provided.
+
+    <Note>
+      The sign-up response always reads "If the email is allowed and not already registered, a verification email will be sent." This is intentional — MotionOps avoids confirming whether an email address exists in the system.
+    </Note>
+
+    Open the verification email and click the confirmation link. Once verified, your account status changes to **Active** and you can log in.
+  </Step>
+
+  <Step title="Log in">
+    Go to the MotionOps login page and enter your email and password.
+
+    On success, MotionOps sets two HttpOnly cookies in your browser:
+
+    | Cookie | Purpose | Expiry |
+    |---|---|---|
+    | `motionops_access` | JWT access token — sent automatically with every API request | 15 minutes |
+    | `motionops_refresh` | Opaque refresh token — used to silently issue a new access token | 7 days |
+
+    The access token is refreshed automatically before it expires, so you stay logged in as long as you remain active. If your session is idle for more than 30 minutes, MotionOps clears your session and asks you to log in again.
+
+    <Note>
+      If your account has MFA enabled, login returns a `challengeToken` instead of session cookies. Complete the MFA challenge to receive your session.
+    </Note>
+  </Step>
+
+  <Step title="Add your first camera">
+    You need the `camera:create` permission to add cameras. This permission is available to **Admin** and **Super Admin** roles. If you don't have it, ask your admin to connect the camera or upgrade your role.
+
+    Send a `POST` request to `/api/cameras` with your camera's details:
+
+    <CodeGroup>
+
+    ```bash cURL
+    curl -X POST https://your-motionops-instance/api/cameras \
+      -H "Content-Type: application/json" \
+      -b "motionops_access=<your_token>" \
+      -d '{
+        "name": "Front entrance",
+        "location": "Building A — main lobby",
+        "sourceUrl": "rtsp://192.0.2.10:554/stream1",
+        "streamUrl": "https://cdn.example.com/streams/front-entrance.m3u8"
+      }'
+    ```
+
+    ```javascript JavaScript
+    const response = await fetch('https://your-motionops-instance/api/cameras', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Front entrance',
+        location: 'Building A — main lobby',
+        sourceUrl: 'rtsp://192.0.2.10:554/stream1',
+        streamUrl: 'https://cdn.example.com/streams/front-entrance.m3u8',
+      }),
+    });
+    const camera = await response.json();
+    ```
+
+    </CodeGroup>
+
+    **Request body fields**
+
+    | Field | Type | Required | Description |
+    |---|---|---|---|
+    | `name` | string | Yes | Display name for the camera (max 100 characters) |
+    | `location` | string | Yes | Physical location or description (max 200 characters) |
+    | `sourceUrl` | string | Yes | RTSP, RTSPS, or HTTPS stream URL (see note below) |
+    | `streamUrl` | string | No | Optional CDN or HLS delivery URL for the dashboard player |
+
+    A successful request returns `201 Created` with the full camera object:
+
+    ```json Example response (201)
+    {
+      "id": "cam_01hx9f2p3qr4st5uv6wx7yz8ab",
+      "name": "Front entrance",
+      "location": "Building A — main lobby",
+      "sourceUrl": "rtsp://192.0.2.10:554/stream1",
+      "streamUrl": "https://cdn.example.com/streams/front-entrance.m3u8",
+      "status": "offline",
+      "fps": 0,
+      "latencyMs": 0,
+      "lastFrameAt": null,
+      "thumbnailUrl": null,
+      "resolution": null,
+      "createdAt": "2026-04-29T10:00:00.000Z",
+      "updatedAt": "2026-04-29T10:00:00.000Z"
+    }
+    ```
+
+    The camera starts with `status: "offline"`. Once the AI worker connects to the source URL and begins receiving frames, the status updates to `"online"` and `lastFrameAt` populates.
+
+    <Note>
+      **RTSP vs HTTPS source URLs**
+
+      Use `rtsp://` or `rtsps://` for IP cameras and NVRs that expose an RTSP endpoint — this is the most common case. Use `https://` for cameras or encoders that publish an HTTP Live Streaming (HLS) or MJPEG feed over HTTPS.
+
+      In production, only `rtsps://` (RTSP over TLS) and `https://` are accepted. Cleartext `rtsp://` and `http://` are allowed in development environments only. Private or internal IP ranges (10.x, 172.16–31.x, 192.168.x) are blocked in production to prevent server-side request forgery.
+    </Note>
+  </Step>
+
+  <Step title="View live events">
+    Once your camera is online and the AI worker is processing frames, detections appear as events. To retrieve your most recent events, call `GET /api/events`:
+
+    ```bash cURL
+    curl https://your-motionops-instance/api/events?limit=10 \
+      -b "motionops_access=<your_token>"
+    ```
+
+    The response includes a paginated list of events:
+
+    ```json Example response
+    {
+      "data": [
+        {
+          "id": "evt_01hx9g3k4lm5no6pq7rs8tu9vw",
+          "type": "person_detected",
+          "severity": "medium",
+          "summary": "Person detected in zone A",
+          "cameraId": "cam_01hx9f2p3qr4st5uv6wx7yz8ab",
+          "cameraName": "Front entrance",
+          "timestampStart": "2026-04-29T10:04:31.000Z",
+          "reviewStatus": "unreviewed",
+          "snapshotUrl": "https://your-motionops-instance/snapshots/evt_01hx9g3k4lm5no6pq7rs8tu9vw.jpg",
+          "objectClass": "person",
+          "confidence": 0.94
+        }
+      ],
+      "pagination": {
+        "page": 1,
+        "limit": 10,
+        "total": 1,
+        "totalPages": 1
+      }
+    }
+    ```
+
+    You can filter events by camera, severity, type, review status, or date range using query parameters. See the [Events API reference](/api/events) for the full list of filters.
+
+    In the dashboard, events appear in the **Event trail** panel in real time. Click any event to open its detail view, see the detection snapshot, and mark it as `confirmed`, `false_positive`, `ignored`, or `escalated`.
+
+    <Tip>
+      Start with the dashboard's live view to get a feel for detection quality on your camera. Once you're happy with the results, use the [detection configuration guide](/guides/detection-config) to tune confidence thresholds and define detection zones.
+    </Tip>
+  </Step>
+</Steps>

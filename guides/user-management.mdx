@@ -1,0 +1,147 @@
+---
+title: "Invite and manage users across your MotionOps team"
+sidebarTitle: "User Management"
+description: "Send email invitations, assign roles, update user status, revoke pending invitations, and audit team membership — all requiring ADMIN or SUPER_ADMIN role."
+---
+
+MotionOps uses a role-based access model to control what each team member can see and do. As an administrator, you can invite new users, adjust their roles as their responsibilities change, and revoke access when they leave. All user management actions require the `user:create`, `user:read`, or `user:update` permission, which are granted to the `ADMIN` and `SUPER_ADMIN` roles.
+
+<Warning>
+  You cannot demote or delete the last active `SUPER_ADMIN` account. MotionOps enforces this as a safeguard against accidental lockout. Promote at least one other user to `SUPER_ADMIN` before making changes to the existing super-admin account.
+</Warning>
+
+## Invite a user
+
+<Steps>
+  <Step title="Send the invitation">
+    Post to `/api/users/invite` with the recipient's email address, the role you want to assign, and an optional personal message. MotionOps generates a secure invitation token and sends it to the email address automatically.
+
+    <CodeGroup>
+      ```bash cURL
+      curl -X POST https://your-instance.motionops.com/api/users/invite \
+        -H "Content-Type: application/json" \
+        -H "Cookie: motionops_access=<your-token>" \
+        -d '{
+          "email": "alice@example.com",
+          "role": "OPERATOR",
+          "message": "Welcome to the team! Please set up your account at your earliest convenience."
+        }'
+      ```
+
+      ```json Request body
+      {
+        "email": "alice@example.com",
+        "role": "OPERATOR",
+        "message": "Welcome to the team! Please set up your account at your earliest convenience."
+      }
+      ```
+    </CodeGroup>
+
+    ```json Response (201)
+    {
+      "id": "inv_01hzqw4m8skltv3r6c9bg2npje",
+      "email": "alice@example.com",
+      "role": "OPERATOR",
+      "expiresAt": "2026-05-06T10:00:00.000Z",
+      "message": "Invitation sent successfully"
+    }
+    ```
+
+    <Note>
+      Invitations expire after 7 days. If the recipient doesn't accept in time, you can revoke the expired invitation and send a new one. You cannot send a duplicate invitation to an address that already has a pending (non-expired) invite — you will receive a `409 INVITATION_PENDING` error.
+    </Note>
+
+    **Request field reference**
+
+    | Field | Required | Description |
+    |-------|----------|-------------|
+    | `email` | Yes | Recipient email address (max 254 characters) |
+    | `role` | Yes | Role to assign: `VIEWER`, `OPERATOR`, `ANALYST`, `ADMIN`, or `SUPER_ADMIN` |
+    | `message` | No | Optional personal note included in the invitation email (max 500 characters) |
+  </Step>
+
+  <Step title="User accepts the invitation">
+    The invited user receives an email containing a secure link. Clicking it takes them to the MotionOps sign-up page with their email and role pre-filled. They complete registration — choosing a password or continuing with an OAuth provider — and the invitation is consumed.
+
+    You can verify the token is valid before acceptance by calling the public endpoint:
+
+    ```bash cURL
+    curl https://your-instance.motionops.com/api/users/invitations/verify/<64-char-token>
+    ```
+
+    This returns the email, role, expiry time, and the inviter's display name — useful for pre-filling your own custom acceptance UI.
+  </Step>
+
+  <Step title="Confirm the user is active">
+    After the invitation is accepted, the user appears in `GET /api/users` with `status: "ACTIVE"`.
+
+    ```bash cURL
+    curl -G https://your-instance.motionops.com/api/users \
+      -H "Cookie: motionops_access=<your-token>" \
+      --data-urlencode "search=alice@example.com"
+    ```
+
+    You can also filter the user list by `role`, `status`, or `hasMfa` (`true`, `false`, or `all`) to audit your team at a glance.
+  </Step>
+</Steps>
+
+## Update a user's role or status
+
+Use `PATCH /api/users/:id` to change a user's role or status. The `comment` field is required and must be at least 10 characters — it is written to the audit log to record the reason for the change.
+
+<CodeGroup>
+  ```bash cURL
+  curl -X PATCH https://your-instance.motionops.com/api/users/usr_01hzqt5c9bdnpw8v2y3lk6rjfa \
+    -H "Content-Type: application/json" \
+    -H "Cookie: motionops_access=<your-token>" \
+    -d '{
+      "role": "ANALYST",
+      "comment": "Promoted to analyst following security review."
+    }'
+  ```
+
+  ```json Request body
+  {
+    "role": "ANALYST",
+    "comment": "Promoted to analyst following security review."
+  }
+  ```
+</CodeGroup>
+
+```json Response (200)
+{
+  "id": "usr_01hzqt5c9bdnpw8v2y3lk6rjfa",
+  "role": "ANALYST",
+  "status": "ACTIVE"
+}
+```
+
+Changing a user's role or status immediately invalidates all their active sessions. The user will be required to log in again with their new permissions. You can also set `status` to `LOCKED` or `SUSPENDED` to temporarily block access without removing the account.
+
+<Note>
+  You cannot modify your own role or status via this endpoint. Self-modification is blocked by the API (`403 SELF_MODIFICATION_FORBIDDEN`). Have another admin make changes to your account if needed.
+</Note>
+
+## Revoke a pending invitation
+
+If you need to cancel an invitation before it is accepted — for example, because the role or email address was wrong — delete it by invitation ID:
+
+```bash cURL
+curl -X DELETE https://your-instance.motionops.com/api/users/invitations/inv_01hzqw4m8skltv3r6c9bg2npje \
+  -H "Cookie: motionops_access=<your-token>"
+```
+
+A successful revocation returns `204 No Content`. You can then issue a new invitation to the same email address. Invitations that have already been accepted or previously revoked cannot be deleted (the API returns `400 INVITATION_FINALIZED`).
+
+## View pending invitations
+
+List all invitations — including their current status — with `GET /api/users/invitations`:
+
+```bash cURL
+curl https://your-instance.motionops.com/api/users/invitations \
+  -H "Cookie: motionops_access=<your-token>"
+```
+
+Each invitation in the response includes a computed `status` field: `pending`, `accepted`, `revoked`, or `expired`.
+
+For role definitions and permission matrices, see [/roles-permissions](/roles-permissions). For the full users API reference, see [/api/users](/api/users).

@@ -1,0 +1,98 @@
+---
+title: "MotionOps REST API: base URL, errors, and pagination"
+sidebarTitle: "Overview"
+description: "Learn the base URL, JSON content type, error envelope format with retryable flag, pagination shape, and every error code returned by the MotionOps API."
+---
+
+The MotionOps REST API is a JSON-over-HTTP API that lets you manage cameras, query detection events, administer users, and read audit logs. Every request and response body uses `application/json`. You send requests to the base URL of your deployment:
+
+```
+https://your-instance/api
+```
+
+All endpoints require authentication via session cookies (set automatically during login) or a JWT access token passed in the `Authorization` header. See the [Authentication](/api/authentication) page for full details.
+
+## Request format
+
+Set the `Content-Type` header to `application/json` on all requests that include a body.
+
+```bash
+curl -X POST https://your-instance/api/cameras \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Front Door", "location": "Lobby", "sourceUrl": "rtsps://cam1.example.com/stream" }'
+```
+
+## Error responses
+
+All errors follow a consistent envelope format. The `error.code` field is a machine-readable string that identifies the failure reason. The `error.message` field is a human-readable description. The `error.retryable` boolean tells you whether retrying the same request is likely to succeed.
+
+```json
+{
+  "error": {
+    "code": "CAMERA_NOT_FOUND",
+    "message": "Camera not found",
+    "retryable": false
+  }
+}
+```
+
+<Note>
+  When `retryable` is `true`, the failure is transient — typically a database
+  connectivity issue or a downstream service being temporarily unavailable.
+  Implement exponential back-off before retrying. When `retryable` is `false`,
+  the request itself is the problem (bad input, insufficient permissions, or a
+  missing resource); retrying without changes will produce the same error.
+</Note>
+
+## Pagination
+
+List endpoints return a `data` array alongside a `pagination` object.
+
+```json
+{
+  "data": [],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 84,
+    "totalPages": 5
+  }
+}
+```
+
+Pass `page` and `limit` as query parameters to navigate through results. The maximum `limit` accepted by most endpoints is `100`.
+
+## Error code reference
+
+| Code | HTTP status | Retryable | Description |
+|---|---|---|---|
+| `AUTH_MISSING_TOKEN` | 401 | false | No access token or refresh token was provided. |
+| `AUTH_INVALID_TOKEN` | 401 | false | The token is malformed, the signature does not match, or the user no longer exists. |
+| `AUTH_EXPIRED_TOKEN` | 401 | false | The access or refresh token has expired. Call `POST /api/auth/refresh` to obtain a new one. |
+| `AUTH_ACCOUNT_LOCKED` | 403 | false | The account is temporarily locked after repeated failed login attempts. |
+| `AUTH_ACCOUNT_SUSPENDED` | 403 | false | The account has been suspended by an administrator. |
+| `AUTH_EMAIL_NOT_VERIFIED` | 403 | false | The user has not yet verified their email address. |
+| `AUTH_INSUFFICIENT_ROLE` | 403 | false | The authenticated user does not have the required permission for this action. |
+| `CAMERA_NOT_FOUND` | 404 | false | No camera exists with the given ID. |
+| `CAMERA_VALIDATION_ERROR` | 400 | false | The camera request body failed validation. Check `message` for the specific field error. |
+| `EVENT_NOT_FOUND` | 404 | false | No event exists with the given ID. |
+| `EVENT_VALIDATION_ERROR` | 400 | false | The event request body or query parameters failed validation. |
+| `SYSTEM_INTERNAL_ERROR` | 500 | true | An unexpected server-side error occurred. |
+| `SYSTEM_UNAVAILABLE` | 503 | true | A required upstream service (database, auth provider) is temporarily unreachable. |
+
+### Example: handling a retryable error
+
+```javascript
+async function withRetry(fn, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const res = await fn();
+    if (res.ok) return res.json();
+
+    const body = await res.json();
+    if (!body.error?.retryable || attempt === maxAttempts) throw body.error;
+
+    // Exponential back-off: 500ms, 1000ms, 2000ms, …
+    await new Promise(r => setTimeout(r, 500 * 2 ** (attempt - 1)));
+  }
+}
+```

@@ -1,0 +1,170 @@
+---
+title: "Configure AI detection sensitivity and object classes"
+sidebarTitle: "Detection Config"
+description: "Tune YOLO confidence thresholds, IoU overlap, and motion sensitivity using runtime config and named presets to reduce false positives in any environment."
+---
+
+MotionOps ships with sensible detection defaults that work well in most environments, but every deployment is different. A camera covering a busy public entrance needs different sensitivity than one watching a server room. This guide explains the two ways to configure detection behavior — reading the current runtime config and saving named presets — and what each parameter controls.
+
+<Tip>
+  Start with the default values and observe how many events your cameras generate over 24–48 hours. If you are missing real detections (too many false negatives), lower `confidence`. If you are drowning in false positives, raise it. Make one change at a time so you can measure the effect clearly.
+</Tip>
+
+## Runtime config
+
+The runtime config reflects the currently active detection parameters. Fetch it at any time to see what the worker-cv process is using right now.
+
+```bash cURL
+curl https://your-instance.motionops.com/api/config/runtime \
+  -H "Cookie: motionops_access=<your-token>"
+```
+
+```json Response (200)
+{
+  "presetId": null,
+  "presetName": null,
+  "version": 1,
+  "updatedAt": "2026-04-29T10:00:00.000Z",
+  "updatedBy": null,
+  "permissions": {
+    "canEdit": true,
+    "canApplyPreset": true,
+    "canRollback": true
+  },
+  "sections": [
+    {
+      "key": "detector",
+      "label": "Detection",
+      "editable": true,
+      "fields": [
+        {
+          "key": "confidence",
+          "label": "Confidence",
+          "type": "float",
+          "value": 0.5,
+          "defaultValue": 0.5,
+          "min": 0.1,
+          "max": 1.0,
+          "step": 0.05,
+          "description": "Minimum detection confidence"
+        },
+        {
+          "key": "iou",
+          "label": "IoU Threshold",
+          "type": "float",
+          "value": 0.45,
+          "defaultValue": 0.45,
+          "min": 0.1,
+          "max": 1.0,
+          "step": 0.05,
+          "description": "NMS IoU threshold"
+        }
+      ]
+    },
+    {
+      "key": "motion",
+      "label": "Motion",
+      "editable": true,
+      "fields": [
+        {
+          "key": "sensitivity",
+          "label": "Sensitivity",
+          "type": "float",
+          "value": 0.5,
+          "defaultValue": 0.5,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05,
+          "description": "Motion sensitivity"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Parameter reference
+
+### `detector.confidence`
+
+**Range:** 0.1 – 1.0 &nbsp;|&nbsp; **Default:** 0.5
+
+The minimum confidence score a YOLO model prediction must reach before MotionOps records it as a detection. Lower values capture more objects but produce more false positives. Higher values are more selective but may miss detections in poor lighting or partial occlusion.
+
+- **0.3 – 0.4** — High-recall mode, suitable for critical zones where missing a detection is unacceptable
+- **0.5** — Balanced default, suitable for most indoor environments
+- **0.65 – 0.8** — High-precision mode, suitable for low-traffic areas where false positives are disruptive
+
+### `detector.iou`
+
+**Range:** 0.1 – 1.0 &nbsp;|&nbsp; **Default:** 0.45
+
+The Intersection-over-Union (IoU) threshold used by Non-Maximum Suppression (NMS). When two bounding boxes overlap by more than this proportion, the lower-confidence box is discarded. Lower values remove more overlapping detections (fewer duplicate alerts for the same object). Higher values keep more overlapping boxes (useful when closely spaced objects need separate detection).
+
+### `motion.sensitivity`
+
+**Range:** 0.0 – 1.0 &nbsp;|&nbsp; **Default:** 0.5
+
+Controls how much pixel-level change between frames is required before the motion detector fires. Lower values are more sensitive and trigger on subtle movement (e.g., distant figures, swaying vegetation). Higher values require more significant motion (e.g., a person walking close to the camera).
+
+<Note>
+  `motion.sensitivity` and `detector.confidence` are independent. Motion detection is a lightweight frame-diff pre-filter; the YOLO detector then classifies what moved. Both must pass for an event to be created.
+</Note>
+
+## YOLO model selection
+
+The AI worker loads the detection model specified in your deployment configuration. MotionOps validates the model filename against the pattern `yolov{N}{size}.pt` — for example `yolov8n.pt` (nano, fastest), `yolov8s.pt` (small), or `yolov11s.pt`. Larger models produce higher accuracy at the cost of inference speed and GPU memory.
+
+Default detected object classes: `person`, `car`, `truck`, `bicycle`.
+
+## Presets
+
+Presets let you save a named configuration snapshot and re-apply it across cameras or roll back to a known-good baseline. You need the `preset:create` permission to create a preset.
+
+```bash cURL
+curl -X POST https://your-instance.motionops.com/api/config/presets \
+  -H "Content-Type: application/json" \
+  -H "Cookie: motionops_access=<your-token>" \
+  -d '{
+    "name": "High Sensitivity",
+    "description": "Low confidence threshold for critical perimeter cameras.",
+    "config": {
+      "detector": {
+        "confidence": 0.35,
+        "iou": 0.45
+      },
+      "motion": {
+        "sensitivity": 0.7
+      }
+    }
+  }'
+```
+
+```json Response (201)
+{
+  "id": "preset_01hzqv3n7rjtks2x5b8cf9lpqw",
+  "name": "High Sensitivity",
+  "description": "Low confidence threshold for critical perimeter cameras.",
+  "config": {
+    "detector": { "confidence": 0.35, "iou": 0.45 },
+    "motion": { "sensitivity": 0.7 }
+  },
+  "scope": "global",
+  "isBuiltIn": false,
+  "createdBy": "usr_01hzqt5c9bdnpw8v2y3lk6rjfa",
+  "createdAt": "2026-04-29T10:05:00.000Z"
+}
+```
+
+**Preset field reference**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Preset label (max 100 characters) |
+| `description` | No | Free-text description (max 500 characters) |
+| `config` | Yes | Object containing `detector` and/or `motion` sub-objects |
+| `scope` | No | Defaults to `"global"` (max 50 characters) |
+
+List all saved presets with `GET /api/config/presets`. Built-in presets (`isBuiltIn: true`) are provided by MotionOps and cannot be deleted.
+
+For the full config API reference, see [/api/config](/api/config).

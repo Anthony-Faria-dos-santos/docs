@@ -1,0 +1,257 @@
+---
+title: "Detection config API: runtime settings and presets"
+sidebarTitle: "Configuration"
+description: "Read active detection parameters and manage named presets via /api/config/runtime and /api/config/presets. Covers confidence, IoU, and motion sensitivity."
+---
+
+The configuration API exposes the active detection parameters used by the AI worker and lets you create named presets that capture specific tuning states. The runtime endpoint returns a structured view of every configurable field, including its current value, default, valid range, and whether you are permitted to edit it.
+
+For a guide on tuning detection parameters and applying presets, see [Detection configuration](/guides/detection-config).
+
+---
+
+## GET /api/config/runtime
+
+Return the current active runtime configuration. All authenticated users can call this endpoint.
+
+<CodeGroup>
+
+```bash cURL
+curl https://your-instance/api/config/runtime \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/config/runtime", {
+  credentials: "include",
+});
+const config = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "presetId": null,
+  "presetName": null,
+  "version": 1,
+  "updatedAt": "2026-04-29T10:00:00.000Z",
+  "updatedBy": null,
+  "permissions": {
+    "canEdit": true,
+    "canApplyPreset": true,
+    "canRollback": true
+  },
+  "sections": [
+    {
+      "key": "detector",
+      "label": "Detection",
+      "editable": true,
+      "fields": [
+        {
+          "key": "confidence",
+          "label": "Confidence",
+          "type": "float",
+          "value": 0.5,
+          "defaultValue": 0.5,
+          "min": 0.1,
+          "max": 1.0,
+          "step": 0.05,
+          "description": "Minimum detection confidence"
+        },
+        {
+          "key": "iou",
+          "label": "IoU Threshold",
+          "type": "float",
+          "value": 0.45,
+          "defaultValue": 0.45,
+          "min": 0.1,
+          "max": 1.0,
+          "step": 0.05,
+          "description": "NMS IoU threshold"
+        }
+      ]
+    },
+    {
+      "key": "motion",
+      "label": "Motion",
+      "editable": true,
+      "fields": [
+        {
+          "key": "sensitivity",
+          "label": "Sensitivity",
+          "type": "float",
+          "value": 0.5,
+          "defaultValue": 0.5,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05,
+          "description": "Motion sensitivity"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Response field reference
+
+<ResponseField name="presetId" type="string | null">
+  UUID of the currently applied preset, or `null` if no preset is active.
+</ResponseField>
+
+<ResponseField name="presetName" type="string | null">
+  Name of the currently applied preset, or `null`.
+</ResponseField>
+
+<ResponseField name="version" type="integer">
+  Monotonically increasing version counter that increments on each configuration change.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string">
+  ISO 8601 timestamp of the last configuration update.
+</ResponseField>
+
+<ResponseField name="permissions" type="object">
+  Per-caller permission flags:
+  - `canEdit` (boolean) — whether the caller can modify fields directly
+  - `canApplyPreset` (boolean) — whether the caller can switch the active preset
+  - `canRollback` (boolean) — whether the caller can roll back to a previous version
+</ResponseField>
+
+<ResponseField name="sections" type="array">
+  Ordered list of configuration sections. Each section has a `key`, `label`, `editable` flag, and a `fields` array. Each field has `key`, `label`, `type`, `value`, `defaultValue`, optional `min`/`max`/`step`, and a `description`.
+</ResponseField>
+
+---
+
+## GET /api/config/presets
+
+List all saved detection presets ordered by creation date, newest first. All authenticated users can call this endpoint.
+
+<CodeGroup>
+
+```bash cURL
+curl https://your-instance/api/config/presets \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/config/presets", {
+  credentials: "include",
+});
+const { data } = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "data": [
+    {
+      "id": "preset_001",
+      "name": "High Sensitivity",
+      "description": "Lowered confidence threshold for perimeter cameras at night.",
+      "isBuiltIn": false,
+      "scope": "global",
+      "createdBy": "clx0042",
+      "createdAt": "2026-03-10T08:00:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 1, "total": 1, "totalPages": 1 }
+}
+```
+
+### Preset response fields
+
+<ResponseField name="id" type="string">
+  UUID of the preset.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Display name of the preset.
+</ResponseField>
+
+<ResponseField name="description" type="string | null">
+  Optional description of what the preset is optimised for.
+</ResponseField>
+
+<ResponseField name="isBuiltIn" type="boolean">
+  `true` for system-provided presets that cannot be deleted.
+</ResponseField>
+
+<ResponseField name="scope" type="string">
+  The scope at which this preset applies. Defaults to `global`.
+</ResponseField>
+
+<ResponseField name="createdBy" type="string | null">
+  UUID of the user who created the preset, or `null` for built-in presets.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 creation timestamp.
+</ResponseField>
+
+---
+
+## POST /api/config/presets
+
+Create a new named detection preset. Requires the `preset:create` permission. Returns `201 Created` with the saved preset.
+
+<ParamField body="name" type="string" required>
+  Preset display name. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional description of the preset's purpose. Maximum 500 characters.
+</ParamField>
+
+<ParamField body="config" type="object">
+  A free-form JSON object containing the detection parameters to snapshot. Defaults to an empty object `{}`.
+</ParamField>
+
+<ParamField body="scope" type="string">
+  The scope this preset applies to. Defaults to `"global"`. Maximum 50 characters.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/config/presets \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "name": "Night Mode",
+    "description": "Lower confidence threshold for low-light environments.",
+    "config": { "detector": { "confidence": 0.35, "iou": 0.45 }, "motion": { "sensitivity": 0.7 } },
+    "scope": "global"
+  }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/config/presets", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    name: "Night Mode",
+    description: "Lower confidence threshold for low-light environments.",
+    config: {
+      detector: { confidence: 0.35, iou: 0.45 },
+      motion: { sensitivity: 0.7 },
+    },
+    scope: "global",
+  }),
+});
+const preset = await res.json(); // 201
+```
+
+</CodeGroup>
+
+**Response — 201**
+
+Returns the newly created preset object.

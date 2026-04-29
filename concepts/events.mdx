@@ -1,0 +1,112 @@
+---
+title: "Detection events: severity levels and review workflow"
+description: "MotionOps creates an event for every confirmed AI detection. Learn event fields, the five severity levels, review statuses, and how real-time delivery works."
+sidebarTitle: "Events"
+---
+
+An event in MotionOps is created automatically whenever the AI worker detects meaningful activity on a camera stream. Specifically, an event is triggered when two conditions are met: the motion detection stage identifies significant pixel movement in the frame, and the YOLO object detection stage then confirms a recognized object (such as a person or vehicle) with a confidence score at or above the configured threshold. The resulting event record is saved immediately and pushed to any connected dashboard subscribers in real time.
+
+## Event fields
+
+| Field | Description |
+|---|---|
+| `id` | Unique identifier for this event. |
+| `type` | The detection type, e.g., `object_detected`. |
+| `severity` | How significant the event is — see severity levels below. |
+| `summary` | A human-readable description generated at detection time, e.g., `"person detected (conf: 0.87)"`. |
+| `cameraId` | The ID of the camera that produced this event. |
+| `cameraName` | The display name of that camera at the time the event was created. |
+| `timestampStart` | ISO 8601 timestamp when the detection began. |
+| `timestampEnd` | ISO 8601 timestamp when the detection ended (may be `null` for instantaneous events). |
+| `reviewStatus` | The current review state — see the review workflow below. |
+| `snapshotUrl` | URL of a still frame captured at the moment of detection. |
+| `objectClass` | The class name of the detected object, e.g., `person`, `car`, `truck`, `bicycle`. |
+| `confidence` | The detection confidence score from the model, between `0.0` and `1.0`. |
+
+## Severity levels
+
+MotionOps assigns a severity level to every event. Severity is set by the AI worker based on the detection context and can be adjusted by rules you define.
+
+| Severity | When to expect it |
+|---|---|
+| `info` | Low-signal detections — routine activity unlikely to require action. |
+| `low` | Notable activity worth logging but typically not urgent. Default severity for standard object detections. |
+| `medium` | Activity that may warrant a closer look, such as repeated detections in a sensitive zone. |
+| `high` | Significant activity that likely requires operator review soon. |
+| `critical` | Urgent detections that need immediate attention, such as activity in restricted areas. |
+
+<Tip>
+You can filter the events list by severity to quickly surface the highest-priority items. Use `?severity=critical` or `?severity=high` on the events API endpoint.
+</Tip>
+
+## Review workflow
+
+Every event starts with a `reviewStatus` of `unreviewed`. Operators and analysts work through the event queue, examining the snapshot and detection details, then set a status that reflects their assessment. An optional `notes` field (up to 2,000 characters) lets reviewers add context that is stored alongside the event and recorded in the audit trail.
+
+<Tabs>
+  <Tab title="unreviewed">
+    The event has not yet been examined by a human. This is the default state for all newly created events. Your event queue shows all `unreviewed` events so nothing slips through.
+  </Tab>
+  <Tab title="confirmed">
+    A reviewer has verified that the detection is a real incident. Use this status when the event describes something that genuinely happened and may require further action or archiving.
+  </Tab>
+  <Tab title="false_positive">
+    The detection was triggered but on closer inspection it does not represent a real incident — for example, a shadow, a reflection, or a known harmless object. Marking events as false positives helps you track model accuracy over time.
+  </Tab>
+  <Tab title="ignored">
+    The event is real but does not require any action. Use this for expected, low-priority activity you want to acknowledge without escalating.
+  </Tab>
+  <Tab title="escalated">
+    The event requires attention from someone with a higher access level or a separate response team. Escalated events appear prominently in admin views.
+  </Tab>
+</Tabs>
+
+<Note>
+Only users with the `event:review` permission can update review status. This includes the `OPERATOR`, `ANALYST`, `ADMIN`, and `SUPER_ADMIN` roles. Reviewing an event is always recorded in the audit trail, including who made the change and when.
+</Note>
+
+## Real-time event delivery
+
+When the AI worker produces a new event, MotionOps immediately pushes an `event:new` WebSocket message to all subscribers of that camera's channel. The payload includes the full event fields listed above, so your dashboard can display alerts without polling the REST API.
+
+```json
+{
+  "id": "evt_01j...",
+  "type": "object_detected",
+  "severity": "low",
+  "summary": "person detected (conf: 0.91)",
+  "cameraName": "Main entrance",
+  "timestampStart": "2026-04-29T14:22:03.000Z",
+  "reviewStatus": "unreviewed",
+  "snapshotUrl": "https://...",
+  "objectClass": "person",
+  "confidence": 0.91
+}
+```
+
+## Filtering events
+
+You can filter the events list by multiple dimensions simultaneously:
+
+```http
+GET /api/events?severity=high&reviewStatus=unreviewed&camera=<cameraId>&dateFrom=2026-04-01T00:00:00Z
+```
+
+| Query parameter | Accepted values |
+|---|---|
+| `severity` | `info`, `low`, `medium`, `high`, `critical` |
+| `reviewStatus` | `unreviewed`, `confirmed`, `false_positive`, `ignored`, `escalated` |
+| `camera` | Camera UUID |
+| `dateFrom` / `dateTo` | ISO 8601 datetime |
+| `type` | Detection type string, e.g., `object_detected` |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Reviewing events" icon="check-circle" href="/guides/review-events">
+    Learn how to triage and resolve events efficiently.
+  </Card>
+  <Card title="Events API reference" icon="code" href="/api/events">
+    Full reference for the `/api/events` endpoints.
+  </Card>
+</CardGroup>

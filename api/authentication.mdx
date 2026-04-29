@@ -1,0 +1,405 @@
+---
+title: "Authentication API: login, MFA, and session endpoints"
+sidebarTitle: "Auth Endpoints"
+description: "Sign up, log in with optional TOTP MFA, refresh sessions, reset passwords, and retrieve the current user session via the MotionOps auth API."
+---
+
+MotionOps uses a cookie-based session system backed by short-lived JWT access tokens. When you log in successfully, the server sets two `httpOnly` cookies — `motionops_access` (15-minute JWT) and `motionops_refresh` (7-day rotation token). You do not need to manage these manually; the browser or HTTP client handles them automatically.
+
+<Note>
+  All authentication tokens are stored in `httpOnly`, `SameSite=Strict` cookies.
+  You cannot read them from JavaScript. The server sets and clears them
+  automatically on login, refresh, and logout. If you need to authenticate
+  programmatically (e.g., from a server-side script), pass the JWT access token
+  in the `Authorization: Bearer <token>` header instead.
+</Note>
+
+---
+
+## User session object
+
+Most auth endpoints return a `user` object with the following shape:
+
+<ResponseField name="id" type="string">
+  UUID of the authenticated user.
+</ResponseField>
+
+<ResponseField name="displayName" type="string">
+  The user's chosen display name.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  The user's email address.
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  The user's role: `VIEWER`, `OPERATOR`, `ANALYST`, `ADMIN`, or `SUPER_ADMIN`.
+</ResponseField>
+
+<ResponseField name="permissions" type="string[]">
+  Resolved permission strings derived from the user's role (e.g., `camera:read`, `event:review`).
+</ResponseField>
+
+<ResponseField name="lastLoginAt" type="string">
+  ISO 8601 timestamp of the user's most recent successful login.
+</ResponseField>
+
+<ResponseField name="mfaEnabled" type="boolean">
+  Whether the user has enrolled a TOTP authenticator.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Account status: `ACTIVE`, `PENDING_VERIFICATION`, `SUSPENDED`, or `LOCKED`.
+</ResponseField>
+
+<ResponseField name="onboardingStep" type="integer">
+  Current onboarding step number. `0` means onboarding is complete.
+</ResponseField>
+
+<ResponseField name="onboardingCompletedAt" type="string | null">
+  ISO 8601 timestamp when onboarding was completed, or `null` if not yet done.
+</ResponseField>
+
+<ResponseField name="isDemoAccount" type="boolean">
+  `true` if this account is a read-only demo account.
+</ResponseField>
+
+---
+
+## POST /api/auth/signup
+
+Register a new account. The server always responds `202` regardless of whether the email already exists, to prevent account enumeration. A verification email is sent when the registration succeeds.
+
+<ParamField body="email" type="string" required>
+  A valid email address. Maximum 254 characters.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The account password. Minimum 12 characters, maximum 128 characters.
+</ParamField>
+
+<ParamField body="displayName" type="string" required>
+  The name displayed in the UI. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="termsAccepted" type="boolean" required>
+  Must be `true`. You must explicitly accept the Terms of Service.
+</ParamField>
+
+<ParamField body="privacyPolicyAccepted" type="boolean" required>
+  Must be `true`. You must explicitly accept the Privacy Policy.
+</ParamField>
+
+<ParamField body="termsVersion" type="string" required>
+  The version string of the Terms of Service being accepted (e.g., `"v1.0"`).
+</ParamField>
+
+<ParamField body="privacyPolicyVersion" type="string" required>
+  The version string of the Privacy Policy being accepted (e.g., `"v1.0"`).
+</ParamField>
+
+<ParamField body="inviteToken" type="string">
+  Optional 64-character invitation token. When provided and valid, the new account is created with the role specified in the invitation rather than the default `VIEWER` role.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "supersecretpass1",
+    "displayName": "Jane Smith",
+    "termsAccepted": true,
+    "privacyPolicyAccepted": true,
+    "termsVersion": "v1.0",
+    "privacyPolicyVersion": "v1.0"
+  }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/auth/signup", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    email: "user@example.com",
+    password: "supersecretpass1",
+    displayName: "Jane Smith",
+    termsAccepted: true,
+    privacyPolicyAccepted: true,
+    termsVersion: "v1.0",
+    privacyPolicyVersion: "v1.0",
+  }),
+});
+// Always 202
+const data = await res.json();
+// { message: "If the email is allowed and not already registered, a verification email will be sent." }
+```
+
+</CodeGroup>
+
+**Response — 202**
+
+```json
+{
+  "message": "If the email is allowed and not already registered, a verification email will be sent."
+}
+```
+
+---
+
+## POST /api/auth/login
+
+Authenticate with an email and password. If MFA is enabled on the account, the response contains a `challengeToken` instead of session cookies; complete the flow with `POST /api/auth/login/mfa`.
+
+<ParamField body="email" type="string" required>
+  The account email address.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The account password.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/auth/login \
+  -H "Content-Type: application/json" \
+  -c cookies.txt \
+  -d '{ "email": "user@example.com", "password": "supersecretpass1" }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/auth/login", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "user@example.com", password: "supersecretpass1" }),
+});
+const data = await res.json();
+if (data.mfaRequired) {
+  // Proceed to MFA step
+} else {
+  console.log(data.user);
+}
+```
+
+</CodeGroup>
+
+**Response — 200 (no MFA)**
+
+```json
+{
+  "user": {
+    "id": "clx...",
+    "displayName": "Jane Smith",
+    "email": "user@example.com",
+    "role": "OPERATOR",
+    "permissions": ["camera:read", "event:review"],
+    "lastLoginAt": "2026-04-29T10:00:00.000Z",
+    "mfaEnabled": false,
+    "status": "ACTIVE",
+    "onboardingStep": 0,
+    "onboardingCompletedAt": "2026-01-15T08:00:00.000Z",
+    "isDemoAccount": false
+  }
+}
+```
+
+**Response — 200 (MFA required)**
+
+```json
+{
+  "mfaRequired": true,
+  "challengeToken": "eyJ..."
+}
+```
+
+---
+
+## POST /api/auth/login/mfa
+
+Complete an MFA login challenge. Exchange the `challengeToken` from a prior `POST /api/auth/login` call together with the current 6-digit TOTP code from the authenticator app.
+
+<ParamField body="challengeToken" type="string" required>
+  The short-lived challenge token returned by `POST /api/auth/login` when `mfaRequired` is `true`.
+</ParamField>
+
+<ParamField body="code" type="string" required>
+  The current 6-digit TOTP code from the user's authenticator app.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/auth/login/mfa \
+  -H "Content-Type: application/json" \
+  -c cookies.txt \
+  -d '{ "challengeToken": "eyJ...", "code": "123456" }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/auth/login/mfa", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ challengeToken: "eyJ...", code: "123456" }),
+});
+const { user } = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "user": { "id": "clx...", "role": "OPERATOR", "mfaEnabled": true }
+}
+```
+
+---
+
+## GET /api/auth/me
+
+Return the current user's session object. Reads the `motionops_access` cookie or the `Authorization: Bearer` header.
+
+<CodeGroup>
+
+```bash cURL
+curl https://your-instance/api/auth/me \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/auth/me", {
+  credentials: "include",
+});
+const user = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+Returns the [user session object](#user-session-object).
+
+---
+
+## POST /api/auth/logout
+
+Revoke the current refresh token and clear all auth cookies. Returns `204 No Content`.
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/auth/logout \
+  -b cookies.txt -c cookies.txt
+```
+
+```javascript JavaScript
+await fetch("https://your-instance/api/auth/logout", {
+  method: "POST",
+  credentials: "include",
+});
+```
+
+</CodeGroup>
+
+---
+
+## POST /api/auth/refresh
+
+Rotate the refresh token and issue a new access token. Call this before the 15-minute access token expires to maintain an active session. Reads the `motionops_refresh` cookie and issues new cookies in the response.
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/auth/refresh \
+  -b cookies.txt -c cookies.txt
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/auth/refresh", {
+  method: "POST",
+  credentials: "include",
+});
+const { user } = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+Returns the updated [user session object](#user-session-object) and sets new auth cookies.
+
+---
+
+## POST /api/auth/forgot-password
+
+Request a password-reset email. Always returns `202` regardless of whether the email is registered, to prevent account enumeration.
+
+<ParamField body="email" type="string" required>
+  The email address of the account to reset.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "user@example.com" }'
+```
+
+</CodeGroup>
+
+**Response — 202**
+
+```json
+{
+  "message": "If an account exists with this email, a password reset link has been sent."
+}
+```
+
+---
+
+## POST /api/auth/reset-password
+
+Set a new password using the token from the password-reset email. All existing sessions are invalidated on success.
+
+<ParamField body="token" type="string" required>
+  The 64-character reset token from the email link.
+</ParamField>
+
+<ParamField body="newPassword" type="string" required>
+  The new password. Minimum 12 characters, maximum 128 characters.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/auth/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{ "token": "abc123...", "newPassword": "newpassword123!" }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/auth/reset-password", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ token: "abc123...", newPassword: "newpassword123!" }),
+});
+const data = await res.json();
+// { message: "Password reset successfully. Please log in with your new password." }
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "message": "Password reset successfully. Please log in with your new password."
+}
+```

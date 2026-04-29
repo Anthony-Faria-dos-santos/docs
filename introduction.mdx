@@ -1,0 +1,44 @@
+---
+title: "What is MotionOps? AI-powered security surveillance"
+description: "MotionOps is an AI-powered video intelligence platform — live camera feeds, automated object detection, real-time event triage, and a forensic audit trail."
+---
+
+MotionOps connects your IP cameras and RTSP streams to an AI detection pipeline that surfaces real-time security events, organizes them into a reviewable trail, and logs every action your team takes — all through a unified dashboard or REST API. Whether you're monitoring a single site or managing a multi-camera deployment across locations, MotionOps gives you the visibility and controls to stay on top of what's happening.
+
+## What MotionOps does
+
+**Live camera feeds** — Stream RTSP and RTSPS video in real time. MotionOps validates your source URL, connects an AI worker, and starts delivering frames within seconds of adding a camera.
+
+**AI motion detection** — A YOLO-based detection engine continuously analyzes each feed for people, vehicles, and custom objects. You configure confidence thresholds and detection zones; MotionOps does the rest.
+
+**Event trail** — Every detection becomes a reviewable event with a severity level (`info` through `critical`), a snapshot, and full metadata. Operators and analysts triage events directly in the dashboard or via the API.
+
+**Audit log** — Every action — camera added, event reviewed, user role changed — is written to a tamper-evident audit log capturing the actor, timestamp, IP address, and before/after values. The log is exportable for compliance reporting.
+
+**Role-based access** — Five built-in roles (Viewer, Operator, Analyst, Admin, Super Admin) let you give each team member exactly the permissions they need. Admins can invite users and adjust roles without touching the API.
+
+## How to navigate the docs
+
+The documentation is organized into four areas:
+
+- **Get Started** — Everything to go from zero to a working deployment: this introduction, the quickstart guide, and the roles and permissions reference.
+- **Core Concepts** — Deep-dives on cameras, events, detection, and the audit trail.
+- **Guides** — Step-by-step walkthroughs for specific workflows like connecting a camera, reviewing events, and managing users.
+- **API Reference** — Full REST API documentation with request/response schemas and an interactive playground.
+
+## Jump in
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Sign up, connect your first camera, and see live detections in minutes.
+  </Card>
+  <Card title="Cameras" icon="video" href="/concepts/cameras">
+    Learn how MotionOps manages camera connections, status, and stream delivery.
+  </Card>
+  <Card title="Events" icon="bell" href="/concepts/events">
+    Understand how detections become events, and how to triage and export them.
+  </Card>
+  <Card title="API overview" icon="code" href="/api/overview">
+    Explore the full REST API — cameras, events, audit logs, users, and real-time streams.
+  </Card>
+</CardGroup>

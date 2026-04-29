@@ -1,0 +1,232 @@
+---
+title: "Set up MFA, passkeys, and OAuth SSO on your account"
+sidebarTitle: "MFA & Passkeys"
+description: "Protect your MotionOps account with TOTP two-factor authentication, register a WebAuthn passkey for passwordless login, or connect Google, GitHub, or Microsoft."
+---
+
+MotionOps supports three authentication methods beyond a username and password: TOTP-based multi-factor authentication (MFA) with any authenticator app, passkeys (WebAuthn) for passwordless biometric login, and OAuth single sign-on with Google, GitHub, or Microsoft. You can use any combination of these — they can all be active on the same account simultaneously.
+
+<Tabs>
+  <Tab title="TOTP (Authenticator App)">
+    TOTP (Time-based One-Time Password) adds a second factor to your password login. After enrolling, every login asks for a 6-digit code from your authenticator app in addition to your password.
+
+    <Steps>
+      <Step title="Start enrollment">
+        Call the enrollment start endpoint while authenticated. MotionOps generates a TOTP secret, a QR code data URL, and a set of backup codes.
+
+        ```bash cURL
+        curl -X POST https://your-instance.motionops.com/api/auth/mfa/enroll/start \
+          -H "Cookie: motionops_access=<your-token>"
+        ```
+
+        ```json Response (200)
+        {
+          "secret": "JBSWY3DPEHPK3PXP",
+          "qrCodeDataUrl": "data:image/png;base64,iVBORw0KGgo...",
+          "backupCodes": [
+            "a1b2c3d4e5",
+            "f6g7h8i9j0",
+            "k1l2m3n4o5",
+            "p6q7r8s9t0",
+            "u1v2w3x4y5",
+            "z6a7b8c9d0",
+            "e1f2g3h4i5",
+            "j6k7l8m9n0"
+          ],
+          "otpauthUrl": "otpauth://totp/MotionOps%20(alice%40example.com)?secret=..."
+        }
+        ```
+
+        <Warning>
+          Backup codes are shown **exactly once** and are not recoverable after this response. Store them somewhere secure — a password manager, printed paper in a safe, or an encrypted file — before proceeding. Each code can only be used once.
+        </Warning>
+      </Step>
+
+      <Step title="Scan the QR code">
+        Open your authenticator app (Google Authenticator, Authy, 1Password, Bitwarden, or any TOTP-compatible app) and scan the QR code rendered from `qrCodeDataUrl`. Alternatively, enter the `secret` manually as a base32 key.
+
+        The app will immediately start generating 6-digit codes that rotate every 30 seconds.
+      </Step>
+
+      <Step title="Verify enrollment">
+        Enter the current 6-digit code from your authenticator app to confirm enrollment:
+
+        ```bash cURL
+        curl -X POST https://your-instance.motionops.com/api/auth/mfa/enroll/verify \
+          -H "Content-Type: application/json" \
+          -H "Cookie: motionops_access=<your-token>" \
+          -d '{ "code": "123456" }'
+        ```
+
+        ```json Response (200)
+        {
+          "message": "MFA enrolled successfully"
+        }
+        ```
+
+        If the code is wrong or has expired, you receive `400 MFA_INVALID_CODE`. Re-open your authenticator app, wait for the next code rotation if the current one is about to expire, and try again.
+      </Step>
+
+      <Step title="Complete MFA login">
+        On your next login, after submitting your email and password, the login endpoint returns a short-lived `challengeToken` instead of issuing a session. Submit that token along with your current TOTP code to complete authentication:
+
+        ```bash cURL
+        curl -X POST https://your-instance.motionops.com/api/auth/login/mfa \
+          -H "Content-Type: application/json" \
+          -d '{
+            "challengeToken": "<token-from-login-response>",
+            "code": "123456"
+          }'
+        ```
+
+        ```json Request body
+        {
+          "challengeToken": "<token-from-login-response>",
+          "code": "123456"
+        }
+        ```
+
+        A successful MFA login sets your `motionops_access` and `motionops_refresh` session cookies. The challenge token is valid for 5 minutes — if it expires, restart the login flow.
+
+        You can also use a backup code in place of the 6-digit TOTP code. Each backup code is single-use and is consumed on redemption.
+      </Step>
+    </Steps>
+
+    To disable MFA, call `POST /api/auth/mfa/disable` with a valid TOTP code or backup code. Re-enrollment is available at any time after disabling.
+  </Tab>
+
+  <Tab title="Passkeys (WebAuthn)">
+    Passkeys use WebAuthn to authenticate you with biometrics (Face ID, Touch ID, Windows Hello) or a hardware security key. They replace your password entirely for supported browsers and devices. Passkeys are phishing-resistant and bound to your domain — they cannot be replayed on another site.
+
+    <Steps>
+      <Step title="Request registration options">
+        While authenticated, request the WebAuthn registration options from the server. This returns the challenge and relying party configuration that your browser needs.
+
+        ```bash cURL
+        curl -X POST https://your-instance.motionops.com/api/auth/passkeys/register/options \
+          -H "Cookie: motionops_access=<your-token>"
+        ```
+
+        The response is a standard `PublicKeyCredentialCreationOptions` object. Pass it directly to `navigator.credentials.create()` in your browser.
+      </Step>
+
+      <Step title="Authenticate with your device">
+        Your browser prompts you to use your device's authenticator — Face ID, Touch ID, Windows Hello, or a hardware key such as a YubiKey. This step happens entirely in the browser; MotionOps never receives your biometric data.
+
+        ```javascript Browser
+        const options = await fetch('/api/auth/passkeys/register/options', {
+          method: 'POST',
+          credentials: 'include'
+        }).then(r => r.json());
+
+        // Browser prompts for biometric / device authentication
+        const attestationResponse = await navigator.credentials.create({
+          publicKey: options
+        });
+        ```
+      </Step>
+
+      <Step title="Verify and save the passkey">
+        Send the attestation response back to MotionOps to complete registration. Include an optional `deviceName` so you can identify which passkey belongs to which device later.
+
+        ```bash cURL
+        curl -X POST https://your-instance.motionops.com/api/auth/passkeys/register/verify \
+          -H "Content-Type: application/json" \
+          -H "Cookie: motionops_access=<your-token>" \
+          -d '{
+            "attestationResponse": { "<WebAuthn attestation object>" },
+            "deviceName": "MacBook Pro Touch ID"
+          }'
+        ```
+
+        ```json Response (200)
+        {
+          "verified": true,
+          "message": "Passkey enrolled successfully"
+        }
+        ```
+
+        You can register multiple passkeys — one per device. View and manage your registered passkeys from your account security settings.
+      </Step>
+    </Steps>
+
+    **Passkey login flow**
+
+    To sign in with a passkey, your frontend calls `POST /api/auth/passkeys/login/options` with your email to receive authentication options and a `challengeToken`, then calls `navigator.credentials.get()` to trigger the device authenticator, and finally submits the assertion to `POST /api/auth/passkeys/login/verify` along with the `challengeToken`.
+
+    **Recovering a lost passkey**
+
+    If you lose access to all registered devices, request a recovery email:
+
+    ```bash cURL
+    curl -X POST https://your-instance.motionops.com/api/auth/passkeys/recovery/request \
+      -H "Content-Type: application/json" \
+      -d '{ "email": "alice@example.com" }'
+    ```
+
+    MotionOps always returns `202 Accepted` regardless of whether the email matches an account, to prevent account enumeration. If the account exists and is active, you receive an email with a recovery link. Follow the link to register a new passkey. If your account also has TOTP MFA enabled, you must provide your current TOTP code during the recovery flow.
+  </Tab>
+
+  <Tab title="OAuth SSO">
+    MotionOps supports single sign-on with three OAuth providers: **Google**, **GitHub**, and **Microsoft** (Azure AD). OAuth logins are handled through Supabase Auth — your frontend redirects the user through the provider's consent flow, and after the redirect, your app syncs the resulting session with MotionOps.
+
+    **Supported providers**
+
+    | Provider | `provider` value |
+    |----------|-----------------|
+    | Google | `google` |
+    | GitHub | `github` |
+    | Microsoft (Azure AD) | `azure` |
+
+    <Steps>
+      <Step title="Initiate the OAuth flow">
+        Your frontend triggers the provider's OAuth redirect using Supabase Auth's client library. After the user consents and is redirected back to your app, Supabase gives you an access token.
+      </Step>
+
+      <Step title="Sync the session with MotionOps">
+        Exchange the Supabase access token for a MotionOps session by calling `POST /api/auth/oauth/sync`:
+
+        ```bash cURL
+        curl -X POST https://your-instance.motionops.com/api/auth/oauth/sync \
+          -H "Content-Type: application/json" \
+          -d '{
+            "supabaseAccessToken": "<token-from-supabase-auth>",
+            "provider": "google"
+          }'
+        ```
+
+        ```json Request body
+        {
+          "supabaseAccessToken": "<token-from-supabase-auth>",
+          "provider": "google"
+        }
+        ```
+
+        MotionOps verifies the Supabase token, creates or links your user account, and sets `motionops_access` and `motionops_refresh` session cookies.
+
+        If your account has TOTP MFA enabled, the sync response returns `mfaRequired: true` and a `challengeToken` instead of setting session cookies. Complete login by posting to `POST /api/auth/login/mfa` with the challenge token and your TOTP code.
+
+        <Note>
+          If you already have a MotionOps account with the same email address, MotionOps automatically links your OAuth provider to that existing account. You do not end up with two separate accounts.
+        </Note>
+      </Step>
+    </Steps>
+
+    **Unlinking a provider**
+
+    To remove an OAuth provider from your account, call `DELETE /api/auth/oauth/unlink/:provider`:
+
+    ```bash cURL
+    curl -X DELETE https://your-instance.motionops.com/api/auth/oauth/unlink/google \
+      -H "Cookie: motionops_access=<your-token>"
+    ```
+
+    MotionOps blocks unlinking if it would leave your account with no remaining authentication factors. You must have at least one other linked OAuth provider or a registered passkey before you can unlink a provider.
+
+    <Warning>
+      You cannot unlink your last authentication factor. If you only have one OAuth provider and no passkeys, enrol a passkey or link another provider first.
+    </Warning>
+  </Tab>
+</Tabs>
+
+For more information on session security and token lifetimes, see [/security/authentication](/security/authentication).

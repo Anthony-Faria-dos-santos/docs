@@ -1,0 +1,202 @@
+---
+title: "Realtime API: live frames and events via Socket.IO"
+sidebarTitle: "Realtime (WebSocket)"
+description: "Connect with Socket.IO to subscribe to live JPEG frames, bounding-box tracks, and new detection event notifications from any MotionOps camera."
+---
+
+MotionOps uses [Socket.IO](https://socket.io) to push real-time data to connected clients. Once you subscribe to a camera, the server forwards live JPEG frames, bounding-box tracks from the AI worker, and new detection events without polling. You can also subscribe to the admin channel for system-level updates (ADMIN or SUPER_ADMIN only) and to the health channel for worker health updates.
+
+---
+
+## Authentication
+
+Pass your JWT access token in the Socket.IO handshake `auth` object. You can obtain a JWT by calling `POST /api/auth/login` and reading the `motionops_access` cookie, or by using the `Authorization: Bearer` header flow.
+
+```javascript
+import { io } from "socket.io-client";
+
+const socket = io("https://your-instance", {
+  auth: { token: "your-jwt-access-token" },
+});
+
+socket.on("connect", () => {
+  console.log("Connected:", socket.id);
+});
+
+socket.on("connect_error", (err) => {
+  // err.message is the error code: AUTH_MISSING_TOKEN or AUTH_INVALID_TOKEN
+  console.error("Connection refused:", err.message);
+});
+```
+
+---
+
+## Client-emitted events
+
+These are events your client sends to the server.
+
+### `camera:subscribe`
+
+Subscribe to a camera's real-time feed. The server will begin sending `camera:frame` and `camera:tracks` events for this camera. Requires the `camera:read` permission.
+
+```javascript
+socket.emit("camera:subscribe", { cameraId: "clx0001" });
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `cameraId` | string | UUID of the camera to subscribe to. |
+
+### `camera:unsubscribe`
+
+Stop receiving events for a specific camera.
+
+```javascript
+socket.emit("camera:unsubscribe", { cameraId: "clx0001" });
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `cameraId` | string | UUID of the camera to unsubscribe from. |
+
+### `admin:subscribe`
+
+Subscribe to the admin broadcast channel. Only users with the `ADMIN` or `SUPER_ADMIN` role can join. Attempting to subscribe with a lower role emits an `error` event on your socket.
+
+```javascript
+socket.emit("admin:subscribe");
+```
+
+### `health:subscribe`
+
+Subscribe to the worker health channel to receive periodic health updates.
+
+```javascript
+socket.emit("health:subscribe");
+```
+
+---
+
+## Server-emitted events
+
+These are events the server sends to your client.
+
+### `camera:frame`
+
+Emitted for each video frame received from the worker for cameras you have subscribed to.
+
+<Note>
+  The `frame` field contains the raw JPEG encoded as a base64 string. The `frameUrl` field contains a presigned URL pointing to the same frame stored in object storage. In high-throughput scenarios, prefer `frameUrl` to avoid base64 decoding overhead on the client. Both fields may be `null` depending on the worker configuration.
+</Note>
+
+| Field | Type | Description |
+|---|---|---|
+| `cameraId` | string | UUID of the source camera. |
+| `frame` | string \| null | Base64-encoded JPEG image data. |
+| `frameUrl` | string \| null | Presigned URL to the JPEG frame. |
+| `width` | number \| null | Frame width in pixels. |
+| `height` | number \| null | Frame height in pixels. |
+| `fps` | number \| null | Current frames-per-second reported by the worker. |
+| `capturedAt` | string | ISO 8601 timestamp when the frame was captured. |
+
+### `camera:tracks`
+
+Emitted alongside each frame, carrying the active object detection bounding boxes and track IDs.
+
+| Field | Type | Description |
+|---|---|---|
+| `cameraId` | string | UUID of the source camera. |
+| `tracks` | array | Array of track objects (see below). |
+| `capturedAt` | string | ISO 8601 timestamp of the detection pass. |
+
+Each element in `tracks` has:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Internal track record ID. |
+| `className` | string | Detected object class (e.g., `person`, `vehicle`). |
+| `confidence` | number | Detection confidence score (0–1). |
+| `bbox` | object | Bounding box: `{ x, y, w, h }` in pixels relative to the frame dimensions. |
+| `trackId` | string | Stable ID used to track the same object across consecutive frames. |
+
+### `event:new`
+
+Emitted when the AI worker triggers a new detection event on a camera you have subscribed to.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | UUID of the new event. |
+| `type` | string | Detection type (e.g., `object_detected`). |
+| `severity` | string | Event severity: `info`, `low`, `medium`, `high`, or `critical`. |
+| `summary` | string | Human-readable description of the detection. |
+| `cameraName` | string | Display name of the source camera. |
+| `timestampStart` | string | ISO 8601 timestamp when the event began. |
+| `reviewStatus` | string | Always `unreviewed` for newly created events. |
+| `snapshotUrl` | string \| null | URL to the event snapshot image. |
+| `objectClass` | string \| null | Detected object class, or `null`. |
+| `confidence` | number \| null | Detection confidence, or `null`. |
+
+---
+
+## Complete example
+
+The following example connects to MotionOps, subscribes to a camera, renders incoming frames in an `<img>` element, and logs new detection events to the console.
+
+<Tip>
+  To display a `camera:frame` payload in a browser `<img>` tag, convert the base64
+  string to a `Blob` and create an object URL. This avoids the size overhead of a
+  `data:` URI for large JPEG payloads.
+</Tip>
+
+```javascript
+import { io } from "socket.io-client";
+
+const CAMERA_ID = "clx0001";
+const img = document.getElementById("live-feed"); // <img id="live-feed" />
+
+const socket = io("https://your-instance", {
+  auth: { token: "your-jwt-access-token" },
+});
+
+socket.on("connect", () => {
+  console.log("Connected. Subscribing to camera:", CAMERA_ID);
+  socket.emit("camera:subscribe", { cameraId: CAMERA_ID });
+});
+
+// Display live frames
+socket.on("camera:frame", ({ cameraId, frame, frameUrl }) => {
+  if (cameraId !== CAMERA_ID) return;
+
+  if (frameUrl) {
+    // Prefer presigned URL — no decoding required
+    img.src = frameUrl;
+  } else if (frame) {
+    // Decode base64 JPEG to a Blob URL
+    const binary = atob(frame);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "image/jpeg" });
+
+    const prev = img.src;
+    img.src = URL.createObjectURL(blob);
+    if (prev.startsWith("blob:")) URL.revokeObjectURL(prev); // release old URL
+  }
+});
+
+// Log incoming detection tracks
+socket.on("camera:tracks", ({ cameraId, tracks, capturedAt }) => {
+  if (cameraId !== CAMERA_ID) return;
+  console.log(`[${capturedAt}] ${tracks.length} track(s) detected`);
+});
+
+// Notify on new events
+socket.on("event:new", (event) => {
+  console.warn(
+    `New event [${event.severity}]: ${event.summary} on ${event.cameraName}`
+  );
+});
+
+socket.on("connect_error", (err) => {
+  console.error("WebSocket auth error:", err.message);
+});
+```

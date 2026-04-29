@@ -1,0 +1,97 @@
+---
+title: "User roles and permissions reference for MotionOps"
+sidebarTitle: "Roles & Permissions"
+description: "MotionOps has five built-in roles — Viewer, Operator, Analyst, Admin, Super Admin — each mapped to specific permissions. Full permission matrix included."
+---
+
+Every MotionOps user has exactly one role. A role is a named bundle of permissions that controls which resources a user can read, create, update, or delete. When you invite a user, you choose their role upfront. Admins can change a user's role at any time via `PATCH /api/users/:id`.
+
+## The five roles
+
+### Viewer
+
+The most restricted role. Viewers can read the dashboard, camera list, event list, detection rules, configuration, and health status — but they cannot take any action that changes data or exports anything.
+
+Use this role for stakeholders who need visibility without the ability to interact with events or modify the system.
+
+### Operator
+
+Operators extend the Viewer permission set with the ability to triage events. They can review events (mark them as confirmed, false positive, ignored, or escalated) and export event data for reporting.
+
+Use this role for security operations staff who monitor feeds and respond to detections day-to-day.
+
+### Analyst
+
+Analysts have everything Operators have, plus the ability to read the audit log and manage incidents — creating, reading, and updating incident records. They cannot create or modify cameras, rules, or configuration.
+
+Use this role for security analysts who investigate incidents, correlate events, and produce compliance reports.
+
+### Admin
+
+Admins have broad operational control. In addition to all Analyst capabilities, they can:
+
+- Create and update cameras (but not delete them)
+- Create, update, and delete detection rules
+- Read and update system configuration, and roll back to previous configurations
+- Create presets and apply them to cameras
+
+Admins cannot delete cameras or manage users. Those operations are reserved for Super Admin.
+
+### Super Admin
+
+Super Admins have every permission in the system, including camera deletion and full user management (read, create, update, delete). There must always be at least one active Super Admin in a MotionOps instance — the system prevents the last Super Admin from being demoted or deleted.
+
+<Note>
+  The last-admin protection applies to the **Super Admin** role specifically. If you need to remove or demote the last Super Admin, you must first promote another user to Super Admin. Attempts to delete or demote the sole remaining Super Admin are rejected by the API.
+</Note>
+
+## Permissions reference
+
+The table below lists every permission in the system and which roles hold it.
+
+| Permission | Viewer | Operator | Analyst | Admin | Super Admin |
+|---|:---:|:---:|:---:|:---:|:---:|
+| `dashboard:read` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `camera:read` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `camera:create` | | | | ✓ | ✓ |
+| `camera:update` | | | | ✓ | ✓ |
+| `camera:delete` | | | | | ✓ |
+| `event:read` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `event:review` | | ✓ | ✓ | ✓ | ✓ |
+| `event:export` | | ✓ | ✓ | ✓ | ✓ |
+| `incident:read` | | | ✓ | ✓ | ✓ |
+| `incident:create` | | | ✓ | ✓ | ✓ |
+| `incident:update` | | | ✓ | ✓ | ✓ |
+| `rule:read` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `rule:create` | | | | ✓ | ✓ |
+| `rule:update` | | | | ✓ | ✓ |
+| `rule:delete` | | | | ✓ | ✓ |
+| `config:read` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `config:update` | | | | ✓ | ✓ |
+| `config:rollback` | | | | ✓ | ✓ |
+| `preset:read` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `preset:create` | | | | ✓ | ✓ |
+| `preset:apply` | | | | ✓ | ✓ |
+| `audit:read` | | | ✓ | ✓ | ✓ |
+| `health:read` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `user:read` | | | | | ✓ |
+| `user:create` | | | | | ✓ |
+| `user:update` | | | | | ✓ |
+| `user:delete` | | | | | ✓ |
+
+## How roles are assigned
+
+**On invite** — When an Admin or Super Admin invites a new user, they select the user's role as part of the invitation. The invited user signs up using the invite link; their account is created with the pre-assigned role automatically.
+
+**Changing a role** — Only Super Admins can update a user's role. Send a `PATCH` request to `/api/users/:id` with the new role value:
+
+```bash cURL
+curl -X PATCH https://your-motionops-instance/api/users/usr_01hx9f2p3qr4st5uv6wx7yz8ab \
+  -H "Content-Type: application/json" \
+  -b "motionops_access=<your_token>" \
+  -d '{ "role": "OPERATOR", "comment": "Transitioning to operations team." }'
+```
+
+Valid role values are: `VIEWER`, `OPERATOR`, `ANALYST`, `ADMIN`, `SUPER_ADMIN`. The `comment` field is required and must be at least 10 characters — it is written to the audit log as the reason for the change.
+
+Every role change is written to the audit log with the actor's user ID, the before and after role values, and the timestamp. See the [user management guide](/guides/user-management) for a full walkthrough of the invite and role-change flow.

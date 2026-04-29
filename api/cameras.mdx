@@ -1,0 +1,267 @@
+---
+title: "Cameras API: list, create, update, and delete feeds"
+sidebarTitle: "Cameras"
+description: "Manage video sources in MotionOps. Covers GET, POST, PATCH, and DELETE /api/cameras with request schemas, response shapes, and permission requirements."
+---
+
+The cameras API lets you manage the video sources connected to MotionOps. Every mutating operation is written to the audit log automatically. The list endpoint returns lightweight summaries; the single-camera endpoint returns the full record including the active detection profile and configured zones.
+
+<Warning>
+  In production, `sourceUrl` must use `rtsps://` or `https://` (TLS-secured protocols).
+  Cleartext `rtsp://` and `http://` are only accepted in non-production environments.
+  Requests with internal/private IP addresses in the hostname are always rejected.
+</Warning>
+
+---
+
+## Camera object
+
+<ResponseField name="id" type="string">
+  UUID of the camera.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Human-readable camera name.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current operational status: `online`, `offline`, `buffering`, `degraded`, `paused`, or `reconnecting`.
+</ResponseField>
+
+<ResponseField name="location" type="string">
+  Physical or logical location description.
+</ResponseField>
+
+<ResponseField name="lastFrameAt" type="string | null">
+  ISO 8601 timestamp of the most recently received frame, or `null` if no frame has been received yet.
+</ResponseField>
+
+<ResponseField name="fps" type="number">
+  Current frames-per-second reported by the worker. `0` when the camera is offline.
+</ResponseField>
+
+<ResponseField name="latencyMs" type="number">
+  Current end-to-end latency in milliseconds. `0` when not streaming.
+</ResponseField>
+
+<ResponseField name="activePresetName" type="string | null">
+  Name of the currently applied detection preset, or `null` if none is applied.
+</ResponseField>
+
+<ResponseField name="thumbnailUrl" type="string | null">
+  URL to the most recent thumbnail image, or `null`.
+</ResponseField>
+
+<ResponseField name="resolution" type="string | null">
+  Resolution string (e.g., `"1920x1080"`), or `null` if not yet reported.
+</ResponseField>
+
+---
+
+## GET /api/cameras
+
+List all cameras. Returns a paginated array of camera summaries ordered by name. Requires the `camera:read` permission.
+
+<CodeGroup>
+
+```bash cURL
+curl https://your-instance/api/cameras \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/cameras", {
+  credentials: "include",
+});
+const { data, pagination } = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "data": [
+    {
+      "id": "clx0001",
+      "name": "Front Door",
+      "status": "online",
+      "location": "Lobby Level 1",
+      "lastFrameAt": "2026-04-29T10:30:00.000Z",
+      "fps": 25,
+      "latencyMs": 42,
+      "activePresetName": "Default",
+      "thumbnailUrl": "https://your-instance/frames/clx0001/thumb.jpg",
+      "resolution": "1920x1080"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 1, "total": 1, "totalPages": 1 }
+}
+```
+
+---
+
+## GET /api/cameras/:id
+
+Retrieve a single camera by ID, including its active detection profile and configured zones. Requires the `camera:read` permission.
+
+<CodeGroup>
+
+```bash cURL
+curl https://your-instance/api/cameras/clx0001 \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/cameras/clx0001", {
+  credentials: "include",
+});
+const camera = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+Returns the full camera object including `activeProfile` and `zones` arrays.
+
+**Response — 404**
+
+```json
+{
+  "error": { "code": "CAMERA_NOT_FOUND", "message": "Camera not found", "retryable": false }
+}
+```
+
+---
+
+## POST /api/cameras
+
+Create a new camera. Requires the `camera:create` permission. Returns `201 Created` with the new camera object.
+
+<ParamField body="name" type="string" required>
+  Camera display name. Between 1 and 100 characters.
+</ParamField>
+
+<ParamField body="location" type="string" required>
+  Physical or logical location description. Between 1 and 200 characters.
+</ParamField>
+
+<ParamField body="sourceUrl" type="string" required>
+  The camera stream source URL. Accepted protocols: `rtsp://`, `rtsps://`, `http://`, `https://`. In production environments only `rtsps://` and `https://` are accepted.
+</ParamField>
+
+<ParamField body="streamUrl" type="string">
+  Optional full URL of a re-encoded or transcoded stream to serve to the frontend.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/cameras \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "name": "Parking Lot A",
+    "location": "North entrance",
+    "sourceUrl": "rtsps://cam2.example.com/stream1"
+  }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/cameras", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    name: "Parking Lot A",
+    location: "North entrance",
+    sourceUrl: "rtsps://cam2.example.com/stream1",
+  }),
+});
+const camera = await res.json(); // 201
+```
+
+</CodeGroup>
+
+**Response — 201**
+
+Returns the newly created camera object.
+
+---
+
+## PATCH /api/cameras/:id
+
+Update one or more fields on an existing camera. Only send the fields you want to change — the schema rejects unknown properties. Requires the `camera:update` permission.
+
+<ParamField body="name" type="string">
+  Updated display name. Between 1 and 100 characters.
+</ParamField>
+
+<ParamField body="location" type="string">
+  Updated location description. Between 1 and 200 characters.
+</ParamField>
+
+<ParamField body="sourceUrl" type="string">
+  Updated source URL. Subject to the same protocol rules as `POST`.
+</ParamField>
+
+<ParamField body="streamUrl" type="string | null">
+  Updated transcoded stream URL. Pass `null` to clear it.
+</ParamField>
+
+<ParamField body="status" type="string">
+  Manually override the camera status. Accepted values: `ONLINE`, `OFFLINE`, `BUFFERING`, `DEGRADED`, `PAUSED`, `RECONNECTING`.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X PATCH https://your-instance/api/cameras/clx0001 \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{ "status": "PAUSED" }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/cameras/clx0001", {
+  method: "PATCH",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ status: "PAUSED" }),
+});
+const updated = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+Returns the updated camera object.
+
+---
+
+## DELETE /api/cameras/:id
+
+Permanently delete a camera and all associated data. Returns `204 No Content` on success. Requires the `camera:delete` permission.
+
+<CodeGroup>
+
+```bash cURL
+curl -X DELETE https://your-instance/api/cameras/clx0001 \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+await fetch("https://your-instance/api/cameras/clx0001", {
+  method: "DELETE",
+  credentials: "include",
+});
+```
+
+</CodeGroup>
+
+**Response — 204**
+
+No response body.

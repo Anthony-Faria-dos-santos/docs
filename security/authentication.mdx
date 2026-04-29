@@ -1,0 +1,210 @@
+---
+title: "Sign in to MotionOps: password, MFA, passkeys, SSO"
+sidebarTitle: "Authentication"
+description: "MotionOps supports email/password, TOTP multi-factor auth, WebAuthn passkeys, and OAuth SSO with Google, GitHub, and Microsoft. Includes session lifetime rules."
+---
+
+MotionOps supports four ways to authenticate: email and password (with optional TOTP multi-factor authentication), passkeys for passwordless login via device biometrics, and OAuth single sign-on through Google, GitHub, or Microsoft. All methods issue the same secure session cookies and share the same session lifetime rules.
+
+## Authentication methods
+
+<Tabs>
+  <Tab title="Email + password">
+
+When you sign in with your email and password, MotionOps verifies your credentials and sets two `httpOnly` cookies in your browser:
+
+| Cookie | Contents | Lifetime |
+|---|---|---|
+| `motionops_access` | Signed JWT (your user ID, email, and role) | 15 minutes |
+| `motionops_refresh` | Opaque random token | 7 days |
+
+The access token is used to authorize every API request. The refresh token is used only to issue a new access token when the old one expires — your browser handles this automatically.
+
+**Example request**
+
+```bash
+curl -s -c cookies.txt -X POST https://app.motionops.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "password": "your-password"}'
+```
+
+**Successful response (no MFA)**
+
+```json
+{
+  "user": {
+    "id": "usr_01abc",
+    "displayName": "Yuki Tanaka",
+    "email": "you@example.com",
+    "role": "OPERATOR",
+    "mfaEnabled": false,
+    "status": "ACTIVE"
+  }
+}
+```
+
+If your account has MFA enabled, the response instead returns a challenge token — see the MFA tab.
+
+**Account lockout**
+
+After 10 consecutive failed login attempts, your account is locked for 15 minutes. The lockout lifts automatically after the 15-minute window; no admin action is required. Contact your workspace administrator if you need it unlocked sooner.
+
+  </Tab>
+  <Tab title="MFA (TOTP)">
+
+If you have multi-factor authentication enabled on your account, the login flow requires a second step. After your password is accepted, MotionOps returns a challenge response instead of a session cookie:
+
+```json
+{
+  "mfaRequired": true,
+  "challengeToken": "<short-lived JWT>"
+}
+```
+
+The `challengeToken` is valid for **5 minutes**. Submit it along with a 6-digit TOTP code from your authenticator app:
+
+```bash
+curl -s -c cookies.txt -X POST https://app.motionops.com/api/auth/login/mfa \
+  -H "Content-Type: application/json" \
+  -d '{
+    "challengeToken": "<challengeToken from previous step>",
+    "code": "123456"
+  }'
+```
+
+A successful response sets the same `motionops_access` and `motionops_refresh` cookies described in the Email + password tab.
+
+**Backup codes**
+
+When you enroll MFA, MotionOps generates a set of single-use backup codes. These codes are shown once at enrollment — save them somewhere safe. You can use a backup code in place of a TOTP code in the `code` field above. Each backup code is consumed immediately on use.
+
+<Note>
+To enroll or manage MFA on your account, visit your account security settings. For a step-by-step guide see [Setting up MFA and passkeys](/guides/mfa-passkeys).
+</Note>
+
+  </Tab>
+  <Tab title="Passkeys (WebAuthn)">
+
+Passkeys let you sign in without a password using your device's biometric sensor (Face ID, Touch ID, Windows Hello, or a hardware security key). The login ceremony involves two API calls that your browser orchestrates automatically when you click "Sign in with a passkey" on the login page.
+
+**Step 1 — Request authentication options**
+
+```bash
+curl -s -X POST https://app.motionops.com/api/auth/passkeys/login/options \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com"}'
+```
+
+The response includes a WebAuthn `options` object and a `challengeToken` (valid for 5 minutes) that binds the ceremony to this request.
+
+**Step 2 — Complete the browser ceremony and verify**
+
+Your browser presents the biometric prompt and generates an `assertionResponse`. Submit it with the `challengeToken`:
+
+```bash
+curl -s -c cookies.txt -X POST https://app.motionops.com/api/auth/passkeys/login/verify \
+  -H "Content-Type: application/json" \
+  -d '{
+    "challengeToken": "<challengeToken from step 1>",
+    "assertionResponse": { ... }
+  }'
+```
+
+On success, MotionOps sets the standard session cookies and returns your user profile.
+
+<Tip>
+You can register passkeys for multiple devices from your account security settings. If you lose access to all your registered passkeys, use the passkey recovery flow — MotionOps will send a recovery link to your email address.
+</Tip>
+
+  </Tab>
+  <Tab title="OAuth SSO">
+
+MotionOps supports single sign-on with **Google**, **GitHub**, and **Microsoft**. Clicking a provider button on the login page redirects you through the provider's own OAuth consent flow. After the provider redirects back, the frontend exchanges the resulting Supabase access token with MotionOps:
+
+```bash
+curl -s -c cookies.txt -X POST https://app.motionops.com/api/auth/oauth/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "google",
+    "supabaseAccessToken": "<token issued by Supabase after OAuth redirect>"
+  }'
+```
+
+Valid values for `provider` are `google`, `github`, and `azure` (Microsoft).
+
+MotionOps automatically links an OAuth login to an existing account if the email address matches. A successful sync sets the standard `motionops_access` and `motionops_refresh` cookies.
+
+**MFA with OAuth**
+
+If your account has MFA enabled, an OAuth sync returns `{ "mfaRequired": true, "challengeToken": "..." }` just like a password login. Complete the MFA step as described in the MFA tab before your session is active.
+
+<Note>
+OAuth providers verify email ownership before issuing tokens, so MotionOps treats a verified OAuth email as equivalent to a verified email address in our system.
+</Note>
+
+  </Tab>
+</Tabs>
+
+---
+
+## Session management
+
+### Token lifetimes
+
+Your access token expires 15 minutes after it is issued. MotionOps refreshes it automatically in the background using the refresh token — you will not normally be asked to sign in again within an active session.
+
+The refresh token itself is valid for 7 days. If you do not use MotionOps for more than **30 minutes**, your session is marked idle and the next refresh attempt will fail, requiring you to sign in again.
+
+<Warning>
+After 30 minutes of inactivity your session expires and you will be redirected to the login page. Save any unsaved work before leaving the application unattended.
+</Warning>
+
+### Checking your current session
+
+To retrieve your current user profile and confirm your session is valid, send a request to:
+
+```bash
+curl -s -b cookies.txt https://app.motionops.com/api/auth/me
+```
+
+```json
+{
+  "id": "usr_01abc",
+  "displayName": "Yuki Tanaka",
+  "email": "you@example.com",
+  "role": "OPERATOR",
+  "permissions": ["event:read", "event:review"],
+  "mfaEnabled": true,
+  "status": "ACTIVE",
+  "lastLoginAt": "2026-04-29T08:00:00.000Z"
+}
+```
+
+### Signing out
+
+To invalidate your session and clear all auth cookies:
+
+```bash
+curl -s -b cookies.txt -X POST https://app.motionops.com/api/auth/logout
+```
+
+This revokes your refresh token server-side and removes all three auth cookies from your browser. A `204 No Content` response confirms the logout was successful.
+
+---
+
+## Frequently asked questions
+
+<AccordionGroup>
+  <Accordion title="What happens if my access token expires mid-request?">
+    MotionOps proactively refreshes the access token before it expires. If a request does arrive with an expired token, the server returns `401 AUTH_EXPIRED_TOKEN` and the client automatically retries after refreshing. You will not see an error unless the refresh token is also expired or revoked.
+  </Accordion>
+  <Accordion title="Can I be signed in on multiple devices at the same time?">
+    Yes. Each login issues an independent refresh token. All active sessions remain valid until they expire, are idle for 30 minutes, or you explicitly sign out on a device. There is currently no single "sign out everywhere" action — sign out on each device individually or contact your administrator to revoke all tokens.
+  </Accordion>
+  <Accordion title="What does account lockout mean?">
+    After 10 consecutive failed password attempts, your account is temporarily locked for 15 minutes to protect against brute-force attacks. The lockout lifts automatically — you do not need to reset your password. If you believe your account was locked by someone else, change your password immediately after the lockout expires.
+  </Accordion>
+  <Accordion title="How do I add or remove passkeys?">
+    Visit your account security settings to register additional passkeys or remove passkeys for lost devices. See the [MFA and passkeys guide](/guides/mfa-passkeys) for step-by-step instructions.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,178 @@
+---
+title: "How to connect your first camera feed to MotionOps"
+sidebarTitle: "Connect a Camera"
+description: "Register a camera by posting its RTSP or HTTPS stream URL, verify the worker connects, then subscribe to live frames and detection events via WebSocket."
+---
+
+Before MotionOps can analyze video, you need to register at least one camera. A camera registration tells the platform where to find your stream — MotionOps stores the connection details and hands them off to the computer-vision worker, which establishes the actual connection and begins processing frames.
+
+<Warning>
+  In production environments, MotionOps only accepts streams over TLS. Your `sourceUrl` must use `rtsps://` or `https://`. Plain `rtsp://` and `http://` URLs are rejected in production to prevent unencrypted video traffic on your network.
+</Warning>
+
+<Steps>
+  <Step title="Prepare your stream URL">
+    MotionOps accepts the following URL schemes:
+
+    | Scheme | Use case |
+    |--------|----------|
+    | `rtsps://` | IP cameras over encrypted RTSP (recommended for production) |
+    | `rtsp://` | IP cameras over unencrypted RTSP (development only) |
+    | `https://` | HTTP-based streams (HLS, MJPEG over HTTPS) |
+    | `http://` | HTTP-based streams (development only) |
+
+    Your stream URL typically looks like:
+
+    ```
+    rtsps://username:password@192.0.2.10:554/stream1
+    ```
+
+    Make sure your camera's RTSP server is reachable from the MotionOps worker, and that credentials are embedded in the URL. MotionOps automatically redacts credentials from logs and audit records.
+
+    <Note>
+      Private IP ranges (10.x.x.x, 192.168.x.x, 172.16–31.x.x) are blocked in production as a server-side request forgery (SSRF) protection measure. Use a publicly reachable IP or hostname, or connect your worker to the same private network as the camera.
+    </Note>
+  </Step>
+
+  <Step title="Register the camera">
+    Send a `POST` request to `/api/cameras` with your camera's name, physical location, and stream URL. You need the `camera:create` permission (ADMIN role or higher).
+
+    <CodeGroup>
+      ```bash cURL
+      curl -X POST https://your-instance.motionops.com/api/cameras \
+        -H "Content-Type: application/json" \
+        -H "Cookie: motionops_access=<your-token>" \
+        -d '{
+          "name": "Front Entrance",
+          "location": "Building A - Ground Floor",
+          "sourceUrl": "rtsps://user:pass@192.0.2.10:554/stream1"
+        }'
+      ```
+
+      ```json Request body
+      {
+        "name": "Front Entrance",
+        "location": "Building A - Ground Floor",
+        "sourceUrl": "rtsps://user:pass@192.0.2.10:554/stream1"
+      }
+      ```
+    </CodeGroup>
+
+    A successful registration returns `201 Created`:
+
+    ```json Response (201)
+    {
+      "id": "cam_01hzqr2b4kfx9vp3y8m5n6j7dc",
+      "name": "Front Entrance",
+      "location": "Building A - Ground Floor",
+      "status": "OFFLINE",
+      "sourceUrl": "rtsps://[redacted]@192.0.2.10:554/stream1",
+      "streamUrl": null,
+      "fps": 0,
+      "latencyMs": 0,
+      "thumbnailUrl": null,
+      "resolution": null,
+      "createdAt": "2026-04-29T10:00:00.000Z",
+      "updatedAt": "2026-04-29T10:00:00.000Z"
+    }
+    ```
+
+    <Note>
+      Newly registered cameras always start with `status: "OFFLINE"`. The status changes to `ONLINE` once the worker-cv process connects and begins receiving frames. This typically happens within a few seconds of the worker picking up the new camera record.
+    </Note>
+
+    **Request field reference**
+
+    | Field | Required | Description |
+    |-------|----------|-------------|
+    | `name` | Yes | Human-readable label (max 100 characters) |
+    | `location` | Yes | Physical location description (max 200 characters) |
+    | `sourceUrl` | Yes | Stream URL — see scheme table above |
+    | `streamUrl` | No | Optional secondary output URL (e.g., a transcoded HLS stream) |
+  </Step>
+
+  <Step title="Verify camera status">
+    Poll `GET /api/cameras/:id` to confirm the worker has connected and the camera is online.
+
+    <CodeGroup>
+      ```bash cURL
+      curl https://your-instance.motionops.com/api/cameras/cam_01hzqr2b4kfx9vp3y8m5n6j7dc \
+        -H "Cookie: motionops_access=<your-token>"
+      ```
+    </CodeGroup>
+
+    Once the worker connects, the `status` field will change to `"ONLINE"` and `fps`, `latencyMs`, and `lastFrameAt` will be populated:
+
+    ```json Response (200)
+    {
+      "id": "cam_01hzqr2b4kfx9vp3y8m5n6j7dc",
+      "name": "Front Entrance",
+      "status": "online",
+      "fps": 25,
+      "latencyMs": 42,
+      "lastFrameAt": "2026-04-29T10:00:15.123Z",
+      "location": "Building A - Ground Floor",
+      "thumbnailUrl": "https://...",
+      "resolution": "1920x1080",
+      "activeProfile": { "name": "Default" },
+      "zones": []
+    }
+    ```
+
+    Possible status values are `online`, `offline`, `buffering`, `degraded`, `paused`, and `reconnecting`.
+  </Step>
+
+  <Step title="Subscribe to the live feed via WebSocket">
+    Once the camera is online, connect using Socket.IO to receive real-time frames and detection events:
+
+    ```javascript Browser / Node.js
+    import { io } from "socket.io-client";
+
+    const socket = io("https://your-instance.motionops.com", {
+      auth: { token: "<your-jwt-access-token>" },
+    });
+
+    socket.on("connect", () => {
+      // Subscribe to your camera's channel
+      socket.emit("camera:subscribe", { cameraId: "cam_01hzqr2b4kfx9vp3y8m5n6j7dc" });
+    });
+
+    // Receive live JPEG frames
+    socket.on("camera:frame", ({ frame, frameUrl, capturedAt }) => {
+      console.log("Frame at", capturedAt, frameUrl ?? "(inline base64)");
+    });
+
+    // Receive bounding-box tracks for each frame
+    socket.on("camera:tracks", ({ tracks, capturedAt }) => {
+      console.log(tracks.length, "tracks at", capturedAt);
+    });
+
+    // Receive new detection events
+    socket.on("event:new", (event) => {
+      console.warn("New event:", event.severity, event.summary);
+    });
+    ```
+
+    <Tip>
+      See the [Realtime API reference](/api/realtime) for the full list of Socket.IO events, payload fields, and a complete browser example that renders live frames in an `&lt;img&gt;` tag.
+    </Tip>
+  </Step>
+</Steps>
+
+## Update a camera
+
+Use `PATCH /api/cameras/:id` to update any field without re-registering. Only include the fields you want to change — the body is validated strictly and unknown fields are rejected.
+
+```bash cURL
+curl -X PATCH https://your-instance.motionops.com/api/cameras/cam_01hzqr2b4kfx9vp3y8m5n6j7dc \
+  -H "Content-Type: application/json" \
+  -H "Cookie: motionops_access=<your-token>" \
+  -d '{
+    "name": "Front Entrance (Upgraded)",
+    "location": "Building A - Ground Floor - Left Wing"
+  }'
+```
+
+You can also update `sourceUrl`, `streamUrl`, or `status` (valid values: `ONLINE`, `OFFLINE`, `BUFFERING`, `DEGRADED`, `PAUSED`, `RECONNECTING`). Every change is written to the audit log automatically.
+
+For the full camera API reference, see [/api/cameras](/api/cameras).

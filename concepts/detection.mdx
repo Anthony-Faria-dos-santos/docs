@@ -1,0 +1,129 @@
+---
+title: "How AI detection works: motion gating, YOLO, tracking"
+description: "MotionOps runs a two-stage pipeline — MOG2 motion detection gates YOLO object detection and ByteTrack tracking. Learn every parameter you can tune."
+sidebarTitle: "Detection"
+---
+
+MotionOps uses a two-stage AI pipeline to turn raw video frames into detection events. The first stage acts as a gate: it uses background subtraction to check whether anything in the frame has actually moved. Only when significant motion is confirmed does the second stage run — a YOLO object detection model paired with a ByteTrack tracker. This design keeps CPU and GPU usage low on idle cameras while still catching every meaningful event the moment it occurs.
+
+## How the pipeline works
+
+<Steps>
+  <Step title="Motion detection (MOG2)">
+    Every incoming frame is passed through a MOG2 (Mixture of Gaussians) background subtractor. MOG2 builds a statistical model of the scene's background over time and highlights pixels that deviate from it — the foreground mask.
+
+    MotionOps then checks whether any contiguous foreground region is large enough to be significant (controlled by the internal `motion_min_area` threshold). Shadows are identified and excluded to reduce false triggers.
+
+    If no significant motion is found, the frame is dropped and the YOLO model is not invoked for that frame.
+  </Step>
+  <Step title="Object detection (YOLO)">
+    When motion is detected, the full frame is passed to a YOLO model at 640×640 resolution. The model returns bounding boxes, class labels, and confidence scores for every recognized object in the frame.
+
+    Only objects whose class appears in your configured `detector_classes` list are kept. Detections below the `detector_confidence` threshold are discarded before any event is emitted.
+  </Step>
+  <Step title="Object tracking (ByteTrack)">
+    Accepted detections are handed to ByteTrack, which assigns a persistent `trackId` to each object across frames. This lets MotionOps follow a single person or vehicle through a scene over time, even when detection confidence fluctuates momentarily.
+  </Step>
+  <Step title="Event candidate emission">
+    For each confirmed detection that meets the confidence threshold, the worker emits an event candidate. The API receives it, persists a new event record, and immediately pushes an `event:new` WebSocket message to all dashboard subscribers of that camera.
+  </Step>
+</Steps>
+
+## Configuration parameters
+
+You control the detection pipeline through a set of parameters that can be tuned per-camera via detection presets. All parameters have sensible defaults; start with those and adjust only if you observe too many false positives or missed detections.
+
+### Confidence threshold (`detector_confidence`)
+
+The minimum confidence score a YOLO detection must reach before MotionOps generates an event. Scores are on a `0.0`–`1.0` scale.
+
+- **Default:** `0.5`
+- **Range:** `0.1`–`1.0`
+
+| Value | Effect |
+|---|---|
+| Lower (e.g., `0.3`) | Catches more detections, including uncertain ones. May produce more false positives. |
+| Higher (e.g., `0.75`) | Only high-confidence detections generate events. May miss partially obscured objects. |
+
+### IoU threshold (`detector_iou`)
+
+Intersection over Union (IoU) controls how much two bounding boxes are allowed to overlap before one is suppressed. It is used in Non-Maximum Suppression (NMS) to eliminate duplicate detections of the same object.
+
+- **Default:** `0.45`
+- **Range:** `0.1`–`1.0`
+
+| Value | Effect |
+|---|---|
+| Lower (e.g., `0.2`) | Aggressively removes overlapping boxes. May merge nearby distinct objects into one. |
+| Higher (e.g., `0.7`) | Allows more overlapping boxes to survive. Useful in dense scenes with many close objects. |
+
+### Tracked object classes (`detector_classes`)
+
+The list of object classes the model should look for. Any detected object whose class is not in this list is silently discarded, even if the confidence is high.
+
+- **Default:** `["person", "car", "truck", "bicycle"]`
+
+You can add or remove classes from this list to match your deployment. The class names must correspond to labels in your YOLO model's training dataset (COCO by default).
+
+<Tip>
+Narrowing the class list to only the objects relevant to your site reduces noise significantly. A parking lot camera, for example, might only need `["car", "truck"]`.
+</Tip>
+
+### Motion sensitivity (`motion_sensitivity`)
+
+Controls how sensitive the MOG2 background subtractor is to pixel changes. A higher value means smaller or subtler movements trigger the motion gate.
+
+- **Default:** `0.5`
+- **Range:** `0.0`–`1.0`
+
+| Value | Effect |
+|---|---|
+| Low (e.g., `0.2`) | Only large, obvious movements pass the gate. Reduces events from minor disturbances like foliage or lighting changes. |
+| High (e.g., `0.8`) | Even subtle pixel changes pass the gate. Useful for detecting slow-moving objects but may increase the rate at which YOLO is invoked. |
+
+## YOLO model
+
+By default, MotionOps uses `yolov8n.pt` — a lightweight YOLOv8 nano model that balances speed and accuracy for real-time inference. You can switch to a larger or different-generation model by updating the `model_path` setting in your detection configuration.
+
+Accepted model file patterns:
+
+```
+yolov8n.pt
+yolov8s.pt
+yolov8m.pt
+yolov8l.pt
+yolov8x.pt
+yolov11n.pt
+yolov11s.pt
+yolov11n-seg.pt
+yolov11s-cls.pt
+```
+
+<Warning>
+Larger models (e.g., `yolov8x.pt`) deliver better accuracy but require significantly more GPU memory and processing time. Inference latency directly affects the maximum frame rate you can sustain on each camera.
+</Warning>
+
+<Note>
+Model files must follow the naming pattern `yolov<version>[size][-variant].pt`. Filenames that do not match this pattern are rejected at startup to prevent accidental use of untrusted model files.
+</Note>
+
+## Summary of defaults
+
+| Parameter | Default | Range |
+|---|---|---|
+| `detector_confidence` | `0.5` | `0.1`–`1.0` |
+| `detector_iou` | `0.45` | `0.1`–`1.0` |
+| `detector_classes` | `person, car, truck, bicycle` | Any COCO class names |
+| `motion_sensitivity` | `0.5` | `0.0`–`1.0` |
+| `model_path` | `yolov8n.pt` | YOLO model pattern |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configure detection settings" icon="sliders" href="/guides/detection-config">
+    Step-by-step guide to tuning detection for your cameras.
+  </Card>
+  <Card title="Detection config API reference" icon="code" href="/api/config">
+    Full reference for the detection configuration endpoints.
+  </Card>
+</CardGroup>

@@ -1,0 +1,161 @@
+---
+title: "GDPR rights in MotionOps: access, export, and erasure"
+sidebarTitle: "GDPR & Privacy"
+description: "Exercise your GDPR data rights in MotionOps: request a data access summary, download a portable JSON export, or permanently erase your account via the API."
+---
+
+MotionOps is committed to your privacy rights under the General Data Protection Regulation (GDPR). You can view all personal data held about you, download a portable copy of it, and request permanent erasure of your account — all without contacting support. This page explains each right and shows you exactly how to exercise it.
+
+## Your data rights
+
+### Data Subject Access Request (DSAR)
+
+You can retrieve a structured summary of all personal data MotionOps holds for your account at any time. The response includes your profile, your audit log (the last 1,000 actions taken on your account), and a list of video events you have reviewed.
+
+```bash
+curl -s -b cookies.txt https://app.motionops.com/api/gdpr/me
+```
+
+```json
+{
+  "exportDate": "2026-04-29T10:00:00.000Z",
+  "user": {
+    "id": "usr_01abc",
+    "email": "you@example.com",
+    "displayName": "Yuki Tanaka",
+    "role": "OPERATOR",
+    "status": "ACTIVE",
+    "createdAt": "2025-11-01T09:00:00.000Z"
+  },
+  "auditLogs": [
+    {
+      "action": "auth:login",
+      "resource": "session",
+      "ipAddress": "203.0.113.42",
+      "createdAt": "2026-04-29T08:00:00.000Z"
+    }
+  ],
+  "reviewedEvents": [
+    {
+      "id": "evt_xyz",
+      "type": "MOTION_ALERT",
+      "reviewStatus": "CONFIRMED",
+      "reviewedAt": "2026-04-28T14:22:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### Portable data export
+
+The export endpoint downloads a JSON file named `motionops-data-export-{userId}.json` containing your full account information and complete activity log. Use this if you want a local copy of your data.
+
+<Steps>
+  <Step title="Authenticate">
+    Make sure you are signed in and your session cookies are active. See the [authentication guide](/security/authentication) if you need to sign in via the API.
+  </Step>
+  <Step title="Request the export">
+    Send a GET request to `/api/gdpr/export`. Your browser or HTTP client will receive the file as an attachment.
+
+    ```bash
+    curl -s -b cookies.txt -OJ https://app.motionops.com/api/gdpr/export
+    ```
+
+    The `-OJ` flag saves the file using the server-provided filename (`motionops-data-export-{userId}.json`).
+  </Step>
+  <Step title="Inspect the file">
+    The downloaded JSON contains your account details and every audit log entry on record:
+
+    ```json
+    {
+      "format": "MotionOps GDPR Export v1",
+      "exportDate": "2026-04-29T10:00:00.000Z",
+      "user": {
+        "email": "you@example.com",
+        "displayName": "Yuki Tanaka",
+        "role": "OPERATOR",
+        "createdAt": "2025-11-01T09:00:00.000Z"
+      },
+      "auditLogs": [
+        {
+          "date": "2026-04-29T08:00:00.000Z",
+          "action": "auth:login",
+          "resource": "session",
+          "ip": "203.0.113.42"
+        }
+      ]
+    }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+Download your data export before requesting erasure. Once your account is erased it is no longer accessible, and the export will not be available.
+</Tip>
+
+---
+
+### Right to erasure
+
+You can permanently erase your MotionOps account by sending a DELETE request to `/api/gdpr/me`. This action is irreversible.
+
+```bash
+curl -s -b cookies.txt -X DELETE https://app.motionops.com/api/gdpr/me
+```
+
+```json
+{
+  "message": "Your data has been pseudonymized. Account is no longer accessible."
+}
+```
+
+**What erasure does**
+
+Erasure in MotionOps uses pseudonymization rather than outright deletion of database rows. This means:
+
+- Your email address is replaced with an anonymized placeholder (`deleted_<partial-id>@deleted.motionops.local`)
+- Your display name is set to `Deleted User`
+- Your first name, last name, and profile photo are removed
+- Your account status is set to `DELETED`, blocking all future logins
+- All active sessions (refresh tokens) are immediately revoked
+
+**What is retained**
+
+Audit log entries associated with your account are kept after erasure. These records contain no personally identifiable information beyond your internal user ID, and are retained to satisfy legal and compliance obligations. They are not accessible to you or other users.
+
+<Note>
+Erasure is permanent and irreversible. After your account is erased you cannot sign in, recover your data, or undo the action. If you have any doubts, download your data export first.
+</Note>
+
+---
+
+## Administrator erasure
+
+A Super Admin can pseudonymize any user account via the admin API:
+
+```bash
+curl -s -b cookies.txt -X DELETE https://app.motionops.com/api/users/{userId}
+```
+
+This performs the same pseudonymization described above — replacing PII, setting status to `DELETED`, and revoking all sessions. An audit log entry is created for compliance. This action cannot be undone.
+
+---
+
+## Frequently asked questions
+
+<AccordionGroup>
+  <Accordion title="Does erasure delete my account immediately?">
+    Your account record remains in the database but is anonymized (pseudonymized). The email, display name, and other PII fields are replaced so the record can no longer be linked to you. The effect from your perspective is immediate and permanent — you cannot sign in or recover the account.
+  </Accordion>
+  <Accordion title="Why are audit logs kept after erasure?">
+    Audit logs form part of MotionOps's security and compliance record. Under GDPR, controllers may retain certain data when there is a legitimate legal basis, such as legal claims or regulatory requirements. The retained entries do not contain your email address, name, or other direct identifiers.
+  </Accordion>
+  <Accordion title="Can I request erasure of another user's data?">
+    Only a Super Admin can erase another user's account. If you believe your data has been processed unlawfully, contact your workspace administrator or reach out to MotionOps support.
+  </Accordion>
+  <Accordion title="How long does the DSAR response take?">
+    The `/api/gdpr/me` endpoint returns your data immediately in real time. There is no waiting period.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,230 @@
+---
+title: "Events API: list, retrieve, and review AI detections"
+sidebarTitle: "Events"
+description: "Query AI detection events by camera, severity, and review status. Submit review decisions via PATCH /api/events/:id/review to confirm or dismiss detections."
+---
+
+Detection events are created automatically by the MotionOps AI worker whenever the configured detection rules trigger. Each event captures the time, severity, camera, snapshot URL, and object metadata at the moment of detection. You can filter events by camera, severity, type, and review status, and submit reviews to classify events for your security workflow.
+
+---
+
+## Event object
+
+<ResponseField name="id" type="string">
+  UUID of the event.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Detection type string (e.g., `object_detected`, `motion_detected`).
+</ResponseField>
+
+<ResponseField name="severity" type="string">
+  Severity level: `info`, `low`, `medium`, `high`, or `critical`.
+</ResponseField>
+
+<ResponseField name="summary" type="string">
+  Human-readable description of what was detected.
+</ResponseField>
+
+<ResponseField name="cameraId" type="string">
+  UUID of the camera that produced the event.
+</ResponseField>
+
+<ResponseField name="cameraName" type="string">
+  Display name of the camera.
+</ResponseField>
+
+<ResponseField name="timestampStart" type="string">
+  ISO 8601 timestamp of when the event began.
+</ResponseField>
+
+<ResponseField name="reviewStatus" type="string">
+  Current review state: `unreviewed`, `confirmed`, `false_positive`, `ignored`, or `escalated`.
+</ResponseField>
+
+<ResponseField name="snapshotUrl" type="string | null">
+  URL to the captured snapshot image, or `null` if no snapshot is available.
+</ResponseField>
+
+<ResponseField name="objectClass" type="string | null">
+  The detected object class (e.g., `person`, `vehicle`), or `null`.
+</ResponseField>
+
+<ResponseField name="confidence" type="number | null">
+  Model confidence score between `0` and `1`, or `null`.
+</ResponseField>
+
+---
+
+## GET /api/events
+
+Return a paginated, filterable list of detection events, ordered newest-first. All authenticated users can call this endpoint.
+
+<ParamField query="page" type="integer">
+  Page number to retrieve. Default `1`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Results per page. Minimum `1`, maximum `100`. Default `20`.
+</ParamField>
+
+<ParamField query="camera" type="string">
+  Filter by camera UUID.
+</ParamField>
+
+<ParamField query="severity" type="string">
+  Filter by severity. One of: `info`, `low`, `medium`, `high`, `critical`.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by detection type string (e.g., `object_detected`).
+</ParamField>
+
+<ParamField query="reviewStatus" type="string">
+  Filter by review status. One of: `unreviewed`, `confirmed`, `false_positive`, `ignored`, `escalated`.
+</ParamField>
+
+<ParamField query="dateFrom" type="string">
+  Include only events at or after this ISO 8601 datetime (e.g., `2026-04-01T00:00:00Z`).
+</ParamField>
+
+<ParamField query="dateTo" type="string">
+  Include only events at or before this ISO 8601 datetime.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl "https://your-instance/api/events?severity=high&reviewStatus=unreviewed&limit=50" \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const params = new URLSearchParams({
+  severity: "high",
+  reviewStatus: "unreviewed",
+  limit: "50",
+});
+const res = await fetch(`https://your-instance/api/events?${params}`, {
+  credentials: "include",
+});
+const { data, pagination } = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "data": [
+    {
+      "id": "evt_001",
+      "type": "object_detected",
+      "severity": "high",
+      "summary": "Person detected in restricted zone",
+      "cameraId": "clx0001",
+      "cameraName": "Front Door",
+      "timestampStart": "2026-04-29T10:25:00.000Z",
+      "reviewStatus": "unreviewed",
+      "snapshotUrl": "https://your-instance/snapshots/evt_001.jpg",
+      "objectClass": "person",
+      "confidence": 0.94
+    }
+  ],
+  "pagination": { "page": 1, "limit": 50, "total": 3, "totalPages": 1 }
+}
+```
+
+---
+
+## GET /api/events/:id
+
+Retrieve a single event by ID. The response includes the associated camera details, object tracking data, and the rule that triggered the event.
+
+<CodeGroup>
+
+```bash cURL
+curl https://your-instance/api/events/evt_001 \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/events/evt_001", {
+  credentials: "include",
+});
+const event = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+Returns the full event object with nested `camera`, `tracks`, and `rule` fields.
+
+**Response — 404**
+
+```json
+{
+  "error": { "code": "EVENT_NOT_FOUND", "message": "Event not found", "retryable": false }
+}
+```
+
+---
+
+## PATCH /api/events/:id/review
+
+Submit a review decision for a detection event. Requires the `event:review` permission (OPERATOR role or higher). Each review is recorded in the audit log with the reviewer's ID and timestamp.
+
+<ParamField body="status" type="string" required>
+  The review outcome. One of: `confirmed`, `false_positive`, `ignored`, `escalated`.
+</ParamField>
+
+<ParamField body="notes" type="string">
+  Optional reviewer notes. Maximum 2000 characters.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X PATCH https://your-instance/api/events/evt_001/review \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{ "status": "confirmed", "notes": "Confirmed intruder — security dispatched." }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/events/evt_001/review", {
+  method: "PATCH",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    status: "confirmed",
+    notes: "Confirmed intruder — security dispatched.",
+  }),
+});
+const updated = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+Returns the updated event object with the new `reviewStatus`.
+
+```json
+{
+  "id": "evt_001",
+  "reviewStatus": "confirmed",
+  "severity": "high",
+  "type": "object_detected"
+}
+```
+
+**Response — 400**
+
+```json
+{
+  "error": { "code": "EVENT_VALIDATION_ERROR", "message": "Invalid enum value. Expected 'confirmed' | 'false_positive' | 'ignored' | 'escalated'", "retryable": false }
+}
+```

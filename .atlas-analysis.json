@@ -1,0 +1,124 @@
+{
+  "projectType": "saas",
+  "projectName": "MotionOps",
+  "projectDescription": "A supervisable, auditable video intelligence platform that delivers live camera feeds, AI-powered motion and object detection, hot-reloadable detection rules, and a full forensic event trail.",
+  "theme": "luma",
+  "primaryColor": "#0c64c4",
+  "lightColor": "#84b4dc",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "roles-permissions"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/cameras",
+              "concepts/events",
+              "concepts/detection",
+              "concepts/audit-trail"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/connect-camera",
+              "guides/review-events",
+              "guides/detection-config",
+              "guides/user-management",
+              "guides/mfa-passkeys"
+            ]
+          },
+          {
+            "group": "Security & Privacy",
+            "pages": [
+              "security/authentication",
+              "security/gdpr"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/cameras",
+              "api/events",
+              "api/audit",
+              "api/config",
+              "api/users",
+              "api/realtime"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Live camera feed monitoring with real-time frame streaming via WebSocket",
+    "AI-powered motion detection and object tracking (YOLO + ByteTrack)",
+    "Hot-reloadable detection rules and configurable presets",
+    "Forensic event trail with full audit log of all user and system actions",
+    "Role-based access control (Viewer, Operator, Analyst, Admin, Super Admin)",
+    "Multi-factor authentication: TOTP, passkeys (WebAuthn), and OAuth SSO (Google, GitHub, Microsoft)",
+    "Event review workflow with severity triage (confirmed, false positive, escalated)",
+    "GDPR-compliant data export and right-to-erasure (pseudonymization)"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/signup",
+    "POST /api/auth/login",
+    "POST /api/auth/logout",
+    "POST /api/auth/refresh",
+    "GET  /api/auth/me",
+    "POST /api/auth/mfa/enroll/start",
+    "POST /api/auth/mfa/enroll/verify",
+    "POST /api/auth/login/mfa",
+    "POST /api/auth/passkeys/register/options",
+    "POST /api/auth/passkeys/register/verify",
+    "POST /api/auth/passkeys/login/options",
+    "POST /api/auth/passkeys/login/verify",
+    "POST /api/auth/oauth/sync",
+    "GET  /api/cameras",
+    "GET  /api/cameras/:id",
+    "POST /api/cameras",
+    "PATCH /api/cameras/:id",
+    "DELETE /api/cameras/:id",
+    "GET  /api/events",
+    "GET  /api/events/:id",
+    "PATCH /api/events/:id/review",
+    "GET  /api/audit",
+    "GET  /api/config/presets",
+    "GET  /api/config/runtime",
+    "POST /api/config/presets",
+    "GET  /api/dashboard/kpis",
+    "GET  /api/users",
+    "POST /api/users/invite",
+    "PATCH /api/users/:id",
+    "DELETE /api/users/:id",
+    "GET  /api/gdpr/me",
+    "GET  /api/gdpr/export",
+    "DELETE /api/gdpr/me",
+    "WebSocket event: camera:subscribe",
+    "WebSocket event: camera:frame",
+    "WebSocket event: camera:tracks",
+    "WebSocket event: event:new"
+  ]
+}

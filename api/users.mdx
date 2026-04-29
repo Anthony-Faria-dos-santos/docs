@@ -1,0 +1,301 @@
+---
+title: "Users API: invite, update, and manage team accounts"
+sidebarTitle: "Users"
+description: "Manage user lifecycle in MotionOps — list users, update roles and statuses, send invitations, revoke access, and pseudonymize accounts for GDPR compliance."
+---
+
+The users API lets administrators manage account lifecycle: listing users with filters, viewing detailed profiles, updating roles and statuses, pseudonymizing accounts for GDPR compliance, and managing invitations. Most write operations require at minimum the ADMIN role; account deletion (pseudonymization) requires SUPER_ADMIN.
+
+<Warning>
+  You cannot modify your own role or status through this API. Attempting to do so returns `403 SELF_MODIFICATION_FORBIDDEN`. Additionally, the last active SUPER_ADMIN account cannot be demoted or deleted — MotionOps enforces this to prevent lockout.
+</Warning>
+
+When you update a user's role or status, all of that user's active refresh tokens are revoked immediately, forcing a re-login with the new permissions.
+
+---
+
+## GET /api/users
+
+List users with optional filtering. Requires the `user:read` permission (ADMIN or SUPER_ADMIN).
+
+<ParamField query="page" type="integer">
+  Page number. Default `1`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Results per page. Maximum `100`. Default `25`.
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by account status: `ACTIVE`, `PENDING_VERIFICATION`, `SUSPENDED`, `LOCKED`, or `DELETED`.
+</ParamField>
+
+<ParamField query="role" type="string">
+  Filter by role: `VIEWER`, `OPERATOR`, `ANALYST`, `ADMIN`, or `SUPER_ADMIN`.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Case-insensitive substring match against the user's email address. Maximum 100 characters.
+</ParamField>
+
+<ParamField query="hasMfa" type="string">
+  Filter by MFA enrollment: `true`, `false`, or `all` (default).
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl "https://your-instance/api/users?status=ACTIVE&role=OPERATOR&hasMfa=false" \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const params = new URLSearchParams({ status: "ACTIVE", role: "OPERATOR", hasMfa: "false" });
+const res = await fetch(`https://your-instance/api/users?${params}`, {
+  credentials: "include",
+});
+const { items, total, totalPages } = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "items": [
+    {
+      "id": "clx0042",
+      "email": "jane@example.com",
+      "displayName": "Jane Smith",
+      "role": "OPERATOR",
+      "status": "ACTIVE",
+      "mfaEnabled": false,
+      "emailVerifiedAt": "2026-01-10T09:00:00.000Z",
+      "lastLoginAt": "2026-04-28T14:30:00.000Z",
+      "createdAt": "2026-01-10T08:55:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 25,
+  "total": 1,
+  "totalPages": 1
+}
+```
+
+---
+
+## GET /api/users/:id
+
+Retrieve a single user's full profile, including active sessions, enrolled passkeys, linked OAuth accounts, and the 50 most recent audit log entries for that user. Requires the `user:read` permission.
+
+<CodeGroup>
+
+```bash cURL
+curl https://your-instance/api/users/clx0042 \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/users/clx0042", {
+  credentials: "include",
+});
+const user = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+Returns the full user object including:
+- `linkedAccounts` — OAuth providers linked to the account
+- `passkeys` — registered WebAuthn passkeys
+- `activeSessions` — active (non-revoked, non-expired) refresh tokens
+- `recentAudit` — the 50 most recent audit log entries for this user
+
+---
+
+## PATCH /api/users/:id
+
+Update a user's role or status. Requires the `user:update` permission. All active sessions for the target user are revoked on success.
+
+<ParamField body="role" type="string">
+  New role to assign: `VIEWER`, `OPERATOR`, `ANALYST`, `ADMIN`, or `SUPER_ADMIN`.
+</ParamField>
+
+<ParamField body="status" type="string">
+  New account status: `ACTIVE`, `SUSPENDED`, or `LOCKED`. Setting status to `ACTIVE` on a `LOCKED` account also resets the failed login counter.
+</ParamField>
+
+<ParamField body="comment" type="string" required>
+  Reason for the change, recorded in the audit log. Between 10 and 500 characters.
+</ParamField>
+
+At least one of `role` or `status` must be provided alongside `comment`.
+
+<CodeGroup>
+
+```bash cURL
+curl -X PATCH https://your-instance/api/users/clx0042 \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{
+    "role": "ANALYST",
+    "comment": "Promoted to analyst after completing security training."
+  }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/users/clx0042", {
+  method: "PATCH",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    role: "ANALYST",
+    comment: "Promoted to analyst after completing security training.",
+  }),
+});
+const { id, role, status } = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{ "id": "clx0042", "role": "ANALYST", "status": "ACTIVE" }
+```
+
+---
+
+## DELETE /api/users/:id
+
+Pseudonymize a user account for GDPR compliance. The user's email, display name, and personal identifiers are replaced with anonymized values, and the account status is set to `DELETED`. All active sessions are revoked. Requires the `user:delete` permission (SUPER_ADMIN only).
+
+This operation is irreversible. The audit log retains a record of the deletion action.
+
+<CodeGroup>
+
+```bash cURL
+curl -X DELETE https://your-instance/api/users/clx0042 \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+await fetch("https://your-instance/api/users/clx0042", {
+  method: "DELETE",
+  credentials: "include",
+});
+// 204 No Content
+```
+
+</CodeGroup>
+
+**Response — 204**
+
+No response body.
+
+---
+
+## POST /api/users/invite
+
+Send an invitation email to a new user. The invitation includes a time-limited token that the recipient uses during signup. Requires the `user:create` permission.
+
+<ParamField body="email" type="string" required>
+  The email address to invite. Maximum 254 characters.
+</ParamField>
+
+<ParamField body="role" type="string" required>
+  The role to assign when the invitation is accepted: `VIEWER`, `OPERATOR`, `ANALYST`, `ADMIN`, or `SUPER_ADMIN`.
+</ParamField>
+
+<ParamField body="message" type="string">
+  Optional personal message to include in the invitation email. Maximum 500 characters.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://your-instance/api/users/invite \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{ "email": "newuser@example.com", "role": "OPERATOR" }'
+```
+
+```javascript JavaScript
+const res = await fetch("https://your-instance/api/users/invite", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "newuser@example.com", role: "OPERATOR" }),
+});
+const invitation = await res.json(); // 201
+```
+
+</CodeGroup>
+
+**Response — 201**
+
+```json
+{
+  "id": "inv_001",
+  "email": "newuser@example.com",
+  "role": "OPERATOR",
+  "expiresAt": "2026-05-06T10:00:00.000Z",
+  "message": "Invitation sent successfully"
+}
+```
+
+---
+
+## DELETE /api/users/invitations/:id
+
+Revoke a pending invitation by its ID. This prevents the recipient from using the invitation token to sign up. Requires the `user:create` permission.
+
+<CodeGroup>
+
+```bash cURL
+curl -X DELETE https://your-instance/api/users/invitations/inv_001 \
+  -b cookies.txt
+```
+
+</CodeGroup>
+
+**Response — 204**
+
+No response body. Returns `400` if the invitation has already been accepted or revoked.
+
+---
+
+## GET /api/users/invitations/verify/:token
+
+Public endpoint — no authentication required. Validate an invitation token and return the invitation details needed to pre-fill the signup form. The invitation is not consumed by this call; consumption happens when the recipient completes `POST /api/auth/signup` with the `inviteToken` parameter.
+
+<CodeGroup>
+
+```bash cURL
+curl https://your-instance/api/users/invitations/verify/abc123...64chars
+```
+
+```javascript JavaScript
+const res = await fetch(
+  `https://your-instance/api/users/invitations/verify/${token}`
+);
+const invitation = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "email": "newuser@example.com",
+  "role": "OPERATOR",
+  "message": "Welcome to the team!",
+  "expiresAt": "2026-05-06T10:00:00.000Z",
+  "inviter": { "displayName": "Jane Smith" }
+}
+```
+
+Returns `410` if the token has expired, already been accepted, or been revoked.

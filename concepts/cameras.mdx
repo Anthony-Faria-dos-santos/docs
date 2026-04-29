@@ -1,0 +1,114 @@
+---
+title: "Cameras: connecting and managing live video streams"
+description: "A camera in MotionOps is a registered RTSP or HTTPS video source. Learn about statuses, stream protocols, camera fields, detection presets, and live feeds."
+sidebarTitle: "Cameras"
+---
+
+A camera in MotionOps represents a physical or IP camera connected via a live video stream. Once connected, MotionOps continuously ingests frames from that stream, applies motion and object detection, and surfaces events in real time. Every camera you add is a first-class resource: it has its own status, performance metrics, and detection configuration (called a preset or active profile).
+
+## Supported stream protocols
+
+You connect a camera by providing a `sourceUrl` — the URL or identifier that points to the video source.
+
+| Protocol | Development | Production |
+|---|---|---|
+| `rtsp://` | Allowed | Blocked (use `rtsps://`) |
+| `rtsps://` | Allowed | Allowed |
+| `http://` | Allowed | Blocked (use `https://`) |
+| `https://` | Allowed | Allowed |
+
+<Warning>
+In production, MotionOps enforces TLS-only streams. Cleartext `rtsp://` and `http://` sources are rejected at the API level. Upgrade your streams to `rtsps://` or `https://` before deploying to production.
+</Warning>
+
+<Note>
+In development, you can also pass a webcam index (e.g., `0`) as the `sourceUrl` to use a locally attached camera. This is not supported in production.
+</Note>
+
+## Camera statuses
+
+MotionOps tracks the live health of every camera connection. The `status` field reflects what the AI worker is observing at any given moment.
+
+<AccordionGroup>
+  <Accordion title="ONLINE">
+    The camera is connected and streaming frames normally. The AI worker is actively processing frames and can generate events.
+  </Accordion>
+  <Accordion title="OFFLINE">
+    MotionOps cannot reach the camera — the stream is unreachable or the camera is powered off. Events will not be generated until the connection is restored.
+  </Accordion>
+  <Accordion title="BUFFERING">
+    The camera is connected but frames are arriving slowly or inconsistently. The worker is receiving data but may experience gaps. This often resolves on its own.
+  </Accordion>
+  <Accordion title="DEGRADED">
+    The stream is active but quality has dropped — high latency, dropped frames, or unstable connectivity. Detection continues but accuracy may be reduced.
+  </Accordion>
+  <Accordion title="PAUSED">
+    Processing for this camera has been manually paused. No new events will be generated until you resume it.
+  </Accordion>
+  <Accordion title="RECONNECTING">
+    The worker lost the stream and is actively attempting to reconnect. This happens automatically after a connection failure.
+  </Accordion>
+</AccordionGroup>
+
+## Camera fields
+
+These are the fields returned when you fetch a camera from the API.
+
+| Field | Description |
+|---|---|
+| `name` | Human-readable label you assign when adding the camera. |
+| `location` | A text description of where the camera is physically located (e.g., "Main entrance", "Parking lot B"). |
+| `sourceUrl` | The stream URL or webcam index used by the AI worker to ingest video. Sensitive credentials in the URL are redacted in API responses. |
+| `streamUrl` | Optional secondary URL used to serve the live stream to the MotionOps dashboard (e.g., an HLS or MJPEG endpoint). |
+| `status` | Current connection status (see above). |
+| `fps` | Frames per second currently being processed by the worker. |
+| `latencyMs` | Round-trip latency in milliseconds between the worker and the camera stream. |
+| `resolution` | The frame resolution the worker is receiving, e.g., `1920x1080`. |
+| `lastFrameAt` | ISO 8601 timestamp of the last frame successfully received from this camera. |
+| `thumbnailUrl` | URL of the most recent snapshot captured from this camera. |
+| `activePresetName` | The name of the detection preset (profile) currently active on this camera. |
+
+## Detection presets
+
+Each camera can have an **active profile** (preset) that controls how the AI worker processes its stream — including confidence thresholds, tracked object classes, and motion sensitivity. When you change a camera's active preset, the worker picks up the new configuration on its next processing cycle.
+
+<Tip>
+If a camera shows `activePresetName: null`, it is using the system defaults. You can assign a custom preset to fine-tune detection for that camera's specific environment.
+</Tip>
+
+## Real-time updates
+
+MotionOps streams camera state to your browser over WebSocket. Subscribe to a camera's channel to receive live frame data, bounding box tracks, and new events as they happen.
+
+<Steps>
+  <Step title="Authenticate">
+    Connect to the MotionOps WebSocket endpoint with a valid JWT token in the `auth.token` handshake field.
+  </Step>
+  <Step title="Subscribe">
+    Emit a `camera:subscribe` event with the `cameraId` you want to follow.
+
+    ```json
+    { "cameraId": "cam_01j..." }
+    ```
+  </Step>
+  <Step title="Receive live data">
+    MotionOps will push the following events to your connection:
+
+    | Event | Payload |
+    |---|---|
+    | `camera:frame` | Latest JPEG frame with dimensions and capture timestamp. |
+    | `camera:tracks` | Active bounding boxes and track IDs for the current frame. |
+    | `event:new` | A new detection event for this camera. |
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Connect your first camera" icon="video" href="/guides/connect-camera">
+    Step-by-step guide to adding a camera to MotionOps.
+  </Card>
+  <Card title="Cameras API reference" icon="code" href="/api/cameras">
+    Full reference for the `/api/cameras` endpoints.
+  </Card>
+</CardGroup>

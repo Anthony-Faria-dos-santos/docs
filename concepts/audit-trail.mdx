@@ -1,0 +1,156 @@
+---
+title: "Audit trail: immutable logs for every MotionOps action"
+description: "MotionOps records every login, camera change, and event review in a tamper-evident audit trail. Learn the log structure, access controls, and GDPR support."
+sidebarTitle: "Audit Trail"
+---
+
+Every action taken in MotionOps — logging in, adding a camera, reviewing an event, inviting a user — creates an audit log entry automatically. These entries are immutable: once written, they cannot be edited or deleted through the product. The audit trail gives your security team, compliance officers, and administrators a complete, tamper-evident record of what happened, who did it, and when.
+
+## Audit log entry fields
+
+| Field | Description |
+|---|---|
+| `id` | Unique identifier for this log entry. |
+| `userId` | The ID of the user who performed the action. |
+| `userDisplayName` | The display name of that user at the time of the action. |
+| `action` | A namespaced string identifying what happened (see action types below). |
+| `resource` | The type of resource that was affected, e.g., `camera`, `event`, `user`. |
+| `resourceId` | The ID of the specific resource that was affected. |
+| `changes` | A before/after diff showing exactly which fields changed and what their old and new values were. `null` for creation and deletion events that have no meaningful diff. |
+| `ipAddress` | The IP address from which the request originated. |
+| `userAgent` | The HTTP `User-Agent` string from the request. |
+| `createdAt` | ISO 8601 timestamp when the log entry was created. |
+
+## Action types
+
+MotionOps records the following categories of actions in the audit trail.
+
+<AccordionGroup>
+  <Accordion title="Authentication">
+
+    | Action | Description |
+    |---|---|
+    | `auth:login` | A user successfully authenticated and received a session token. |
+    | `auth:logout` | A user explicitly ended their session. |
+
+  </Accordion>
+  <Accordion title="Camera management">
+
+    | Action | Description |
+    |---|---|
+    | `camera:create` | A new camera was added to MotionOps. The `changes` field contains the initial camera configuration (with sensitive values redacted). |
+    | `camera:update` | A camera's configuration was changed. The `changes` field shows the before and after values for every modified field. |
+    | `camera:delete` | A camera was removed. The `changes` field contains the camera's last known configuration. |
+
+  </Accordion>
+  <Accordion title="Event review">
+
+    | Action | Description |
+    |---|---|
+    | `event:review` | An operator or analyst updated the review status of an event. The `changes` field records the previous and new `reviewStatus`, plus any review notes added. |
+
+  </Accordion>
+  <Accordion title="User management">
+
+    | Action | Description |
+    |---|---|
+    | `user:invited` | A new user was invited to the organization. |
+    | `user:updated` | A user's profile or role was changed. |
+
+  </Accordion>
+  <Accordion title="GDPR and compliance">
+
+    | Action | Description |
+    |---|---|
+    | `gdpr:erasure` | A data erasure request was processed for a user. Personal data associated with that user has been removed in accordance with the right to erasure. |
+
+  </Accordion>
+</AccordionGroup>
+
+## Who can access the audit trail
+
+Access to audit logs is restricted by role.
+
+| Role | Audit log access |
+|---|---|
+| `VIEWER` | No access. |
+| `OPERATOR` | No access. |
+| `ANALYST` | Read access — can query and export audit logs. |
+| `ADMIN` | Read access — can query and export audit logs. |
+| `SUPER_ADMIN` | Full read access across the entire organization. |
+
+<Note>
+Audit log entries are never deleted, even when the associated resource (such as a camera or user) is removed. This ensures you retain a complete historical record for compliance purposes.
+</Note>
+
+## Querying audit logs
+
+You can filter the audit log by user, action type, affected resource, and date range. Results are paginated and returned in reverse chronological order (newest first).
+
+```http
+GET /api/audit?action=event:review&dateFrom=2026-04-01T00:00:00Z&dateTo=2026-04-30T23:59:59Z
+```
+
+| Query parameter | Description |
+|---|---|
+| `user` | Filter by user UUID. |
+| `action` | Filter by action string, e.g., `camera:update`. |
+| `resource` | Filter by resource type, e.g., `camera`, `event`. |
+| `dateFrom` / `dateTo` | ISO 8601 datetime range. |
+| `page` / `limit` | Pagination controls (max 100 per page). |
+
+### Example log entry
+
+```json
+{
+  "id": "aud_01j...",
+  "userId": "usr_01j...",
+  "userDisplayName": "Alice Chen",
+  "action": "event:review",
+  "resource": "event",
+  "resourceId": "evt_01j...",
+  "changes": [
+    {
+      "field": "reviewStatus",
+      "oldValue": "UNREVIEWED",
+      "newValue": "CONFIRMED"
+    },
+    {
+      "field": "reviewNotes",
+      "oldValue": null,
+      "newValue": "Verified on secondary camera footage."
+    }
+  ],
+  "ipAddress": "203.0.113.42",
+  "userAgent": "Mozilla/5.0 ...",
+  "createdAt": "2026-04-29T14:35:00.000Z"
+}
+```
+
+## GDPR compliance
+
+MotionOps supports data subject rights under the GDPR.
+
+<CardGroup cols={2}>
+  <Card title="Data export" icon="download" href="/security/gdpr">
+    Users can request an export of all personal data held about them. The GDPR page explains how to download your data using the API.
+  </Card>
+  <Card title="Right to erasure" icon="trash" href="/security/gdpr">
+    When a user submits an erasure request, MotionOps removes their personal data and records a `gdpr:erasure` entry in the audit trail. The audit record is retained to demonstrate compliance.
+  </Card>
+</CardGroup>
+
+<Warning>
+Erasure requests are irreversible. Once personal data is removed, it cannot be recovered. The `gdpr:erasure` audit entry will remain to show that the request was processed, but the associated personal data will no longer be accessible.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="GDPR and data privacy" icon="shield" href="/security/gdpr">
+    Full guide to data subject rights, retention policies, and compliance features.
+  </Card>
+  <Card title="Audit API reference" icon="code" href="/api/audit">
+    Full reference for the `/api/audit` endpoints.
+  </Card>
+</CardGroup>

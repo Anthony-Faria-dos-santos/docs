@@ -1,0 +1,142 @@
+---
+title: "How to triage, inspect, and review detection events"
+sidebarTitle: "Review Events"
+description: "Filter events by camera, severity, and date range. Inspect snapshots and tracks. Submit confirmed, false_positive, ignored, or escalated verdicts via the API."
+---
+
+Every time MotionOps detects motion or a classified object, it creates an event record. Events capture a snapshot, the detected object class, confidence score, and the bounding-box tracks across frames. Your security team reviews these events to confirm real incidents, dismiss false positives, and escalate anything that needs follow-up.
+
+<Tip>
+  Use the `dateFrom` and `dateTo` filters together when conducting a forensic investigation. For example, to scope your review to a specific overnight window, pass ISO 8601 timestamps for both parameters. MotionOps filters by `timestampStart`, so you get only events that began within your chosen window.
+</Tip>
+
+<Steps>
+  <Step title="List events with filters">
+    `GET /api/events` returns a paginated, filterable list of events. You can narrow results by camera, severity, review status, and time range.
+
+    **Query parameters**
+
+    | Parameter | Type | Description |
+    |-----------|------|-------------|
+    | `camera` | UUID | Filter to a specific camera ID |
+    | `severity` | string | `info`, `low`, `medium`, `high`, or `critical` |
+    | `reviewStatus` | string | `unreviewed`, `confirmed`, `false_positive`, `ignored`, or `escalated` |
+    | `dateFrom` | ISO 8601 datetime | Events starting at or after this time |
+    | `dateTo` | ISO 8601 datetime | Events starting at or before this time |
+    | `page` | integer | Page number (default: 1) |
+    | `limit` | integer | Results per page (default: 20, max: 100) |
+
+    The following example lists all unreviewed critical events across your organization:
+
+    <CodeGroup>
+      ```bash cURL
+      curl -G https://your-instance.motionops.com/api/events \
+        -H "Cookie: motionops_access=<your-token>" \
+        --data-urlencode "severity=critical" \
+        --data-urlencode "reviewStatus=unreviewed" \
+        --data-urlencode "limit=50"
+      ```
+    </CodeGroup>
+
+    ```json Response (200)
+    {
+      "data": [
+        {
+          "id": "evt_01hzqs8p2afcnr7t4w9xk3mjvb",
+          "type": "person_detected",
+          "severity": "critical",
+          "summary": "Person detected in restricted zone",
+          "cameraId": "cam_01hzqr2b4kfx9vp3y8m5n6j7dc",
+          "cameraName": "Front Entrance",
+          "timestampStart": "2026-04-29T02:14:07.000Z",
+          "reviewStatus": "unreviewed",
+          "snapshotUrl": "https://storage.motionops.com/snapshots/evt_01hzqs8p.jpg",
+          "objectClass": "person",
+          "confidence": 0.91
+        }
+      ],
+      "pagination": {
+        "page": 1,
+        "limit": 50,
+        "total": 3,
+        "totalPages": 1
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Inspect event detail">
+    Fetch the full event record with `GET /api/events/:id` to access the complete metadata, including bounding-box tracks, the triggering detection rule, and camera context.
+
+    <CodeGroup>
+      ```bash cURL
+      curl https://your-instance.motionops.com/api/events/evt_01hzqs8p2afcnr7t4w9xk3mjvb \
+        -H "Cookie: motionops_access=<your-token>"
+      ```
+    </CodeGroup>
+
+    The response includes several additional fields not present in the list view:
+
+    | Field | Description |
+    |-------|-------------|
+    | `snapshotUrl` | URL of the keyframe snapshot captured at detection time |
+    | `objectClass` | Detected object class (e.g., `person`, `car`, `truck`, `bicycle`) |
+    | `confidence` | Model confidence score between 0 and 1 |
+    | `tracks` | Array of bounding-box track objects across frames |
+    | `timestampEnd` | When the detection event ended (null if still active) |
+    | `camera` | Embedded camera record with `id`, `name`, `status`, and `location` |
+    | `rule` | The detection rule that triggered the event (`id` and `name`) |
+    | `reviewedBy` | User ID of the reviewer (null if unreviewed) |
+    | `reviewedAt` | Timestamp of the review decision |
+    | `reviewNotes` | Free-text notes left by the reviewer |
+  </Step>
+
+  <Step title="Submit a review decision">
+    Submit your verdict with `PATCH /api/events/:id/review`. You need the `event:review` permission (OPERATOR role or higher — includes OPERATOR, ANALYST, ADMIN, and SUPER_ADMIN).
+
+    **Valid status values**
+
+    | Status | When to use |
+    |--------|-------------|
+    | `confirmed` | The event represents a real detection that should be on record |
+    | `false_positive` | The detection was incorrect — nothing relevant happened |
+    | `ignored` | The event is real but does not require action |
+    | `escalated` | The event requires immediate follow-up by another team member |
+
+    <CodeGroup>
+      ```bash cURL
+      curl -X PATCH https://your-instance.motionops.com/api/events/evt_01hzqs8p2afcnr7t4w9xk3mjvb/review \
+        -H "Content-Type: application/json" \
+        -H "Cookie: motionops_access=<your-token>" \
+        -d '{
+          "status": "confirmed",
+          "notes": "Verified intruder at 02:14 — security notified."
+        }'
+      ```
+
+      ```json Request body
+      {
+        "status": "confirmed",
+        "notes": "Verified intruder at 02:14 — security notified."
+      }
+      ```
+    </CodeGroup>
+
+    ```json Response (200)
+    {
+      "id": "evt_01hzqs8p2afcnr7t4w9xk3mjvb",
+      "reviewStatus": "confirmed",
+      "reviewedBy": "usr_01hzqt5c9bdnpw8v2y3lk6rjfa",
+      "reviewedAt": "2026-04-29T09:30:00.000Z",
+      "reviewNotes": "Verified intruder at 02:14 — security notified.",
+      "severity": "critical"
+    }
+    ```
+
+    The `notes` field is optional (max 2,000 characters) but recommended — notes are written to the audit log and can be retrieved later for compliance reporting.
+
+    Every review decision is recorded in the audit log with the reviewer's user ID, IP address, and the before/after review status.
+  </Step>
+</Steps>
+
+For the full events API reference, see [/api/events](/api/events).

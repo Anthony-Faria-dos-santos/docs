@@ -1,0 +1,147 @@
+---
+title: "Audit log API: query the full MotionOps event trail"
+sidebarTitle: "Audit Logs"
+description: "GET /api/audit — filter the immutable audit trail by user, action, resource, or date range. Returns who changed what, when, and from which IP."
+---
+
+Every state-changing operation in MotionOps — creating cameras, reviewing events, updating users, and more — writes an entry to the append-only audit log. The log records the actor, the action, the affected resource, a computed field-level diff for updates, and the originating IP address. You can use this endpoint to power compliance dashboards, investigate incidents, or export records for external SIEM tools.
+
+<Note>
+  The `changes` field is present only when both a `before` and `after` snapshot were captured (typically on update actions). It contains a computed diff of every field that changed between the two snapshots, with `oldValue` and `newValue` for each field.
+</Note>
+
+Requires the `audit:read` permission, which is granted to users with the ANALYST role or higher.
+
+---
+
+## Audit entry object
+
+<ResponseField name="id" type="string">
+  UUID of the audit log entry.
+</ResponseField>
+
+<ResponseField name="userId" type="string">
+  UUID of the user who performed the action.
+</ResponseField>
+
+<ResponseField name="userDisplayName" type="string">
+  Display name of the actor at the time of the action.
+</ResponseField>
+
+<ResponseField name="action" type="string">
+  Action string in the format `resource:verb` (e.g., `camera:create`, `event:review`, `user:updated`).
+</ResponseField>
+
+<ResponseField name="resource" type="string">
+  The resource type affected (e.g., `camera`, `event`, `user`).
+</ResponseField>
+
+<ResponseField name="resourceId" type="string | null">
+  UUID of the specific resource that was affected, or `null` for actions that do not target a single record.
+</ResponseField>
+
+<ResponseField name="changes" type="array | null">
+  For update actions, an array of changed fields. Each element has:
+  - `field` (string) — the name of the changed field
+  - `oldValue` (any) — the value before the change
+  - `newValue` (any) — the value after the change
+
+  `null` when no before/after snapshot was recorded.
+</ResponseField>
+
+<ResponseField name="ipAddress" type="string | null">
+  IPv4 or IPv6 address of the client that made the request.
+</ResponseField>
+
+<ResponseField name="userAgent" type="string | null">
+  `User-Agent` header string from the original request.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of when the action occurred.
+</ResponseField>
+
+---
+
+## GET /api/audit
+
+Return a paginated list of audit log entries ordered newest-first.
+
+<ParamField query="page" type="integer">
+  Page number to retrieve. Default `1`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Results per page. Minimum `1`, maximum `100`. Default `20`.
+</ParamField>
+
+<ParamField query="user" type="string">
+  Filter by actor user UUID.
+</ParamField>
+
+<ParamField query="action" type="string">
+  Filter by exact action string (e.g., `camera:create`).
+</ParamField>
+
+<ParamField query="resource" type="string">
+  Filter by resource type (e.g., `camera`, `event`, `user`).
+</ParamField>
+
+<ParamField query="dateFrom" type="string">
+  Include only entries at or after this ISO 8601 datetime.
+</ParamField>
+
+<ParamField query="dateTo" type="string">
+  Include only entries at or before this ISO 8601 datetime.
+</ParamField>
+
+<CodeGroup>
+
+```bash cURL — filter by user and date range
+curl "https://your-instance/api/audit?user=clx0042&dateFrom=2026-04-01T00:00:00Z&dateTo=2026-04-30T23:59:59Z" \
+  -b cookies.txt
+```
+
+```bash cURL — filter by action
+curl "https://your-instance/api/audit?action=camera:delete&limit=50" \
+  -b cookies.txt
+```
+
+```javascript JavaScript
+const params = new URLSearchParams({
+  user: "clx0042",
+  dateFrom: "2026-04-01T00:00:00Z",
+  dateTo: "2026-04-30T23:59:59Z",
+  limit: "100",
+});
+const res = await fetch(`https://your-instance/api/audit?${params}`, {
+  credentials: "include",
+});
+const { data, pagination } = await res.json();
+```
+
+</CodeGroup>
+
+**Response — 200**
+
+```json
+{
+  "data": [
+    {
+      "id": "aud_001",
+      "userId": "clx0042",
+      "userDisplayName": "Jane Smith",
+      "action": "camera:update",
+      "resource": "camera",
+      "resourceId": "clx0001",
+      "changes": [
+        { "field": "status", "oldValue": "ONLINE", "newValue": "PAUSED" }
+      ],
+      "ipAddress": "203.0.113.45",
+      "userAgent": "Mozilla/5.0 ...",
+      "createdAt": "2026-04-29T10:30:00.000Z"
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+}
+```
